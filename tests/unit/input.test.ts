@@ -3,7 +3,6 @@ import SWIPL from 'swipl-wasm';
 import {
   PrologEngine,
   bootEngine,
-  encodeAnswer,
   type OpenQuery,
   type OutputSink,
   type SwiplInstance,
@@ -18,8 +17,9 @@ import { decodeBindings, formatTerm } from '../../src/model/term';
  *
  *   - `read/1` cannot be fed from JavaScript. Emscripten's stdin hook only reads
  *     `process.stdin` under Node or `window.prompt` in a window; a Web Worker has
- *     neither, so `user_input` is permanently at end-of-file. Answers therefore go
- *     in through a Prolog string stream.
+ *     neither, so `user_input` is permanently at end-of-file. Answers go in
+ *     through the shim's own queue instead, and running out of them suspends the
+ *     goal rather than yielding `end_of_file` — see `REPL_SHIM`.
  *
  *   - Newlines never reach the `print` callback. Emscripten's TTY flushes on
  *     character 10 and then discards the character, which is right for a terminal
@@ -64,32 +64,6 @@ function fresh(): PrologEngine {
   return engine;
 }
 
-describe('encodeAnswer', () => {
-  it('terminates a bare atom, because read/1 parses a term', () => {
-    // `read/1` needs the full stop: `y` on its own is an unterminated term and
-    // the read fails with a syntax error rather than reading the next answer.
-    expect(encodeAnswer('y')).toBe('y.');
-  });
-
-  it('leaves a line that is already terminated alone', () => {
-    expect(encodeAnswer('y.')).toBe('y.');
-  });
-
-  it('accepts a compound answer', () => {
-    expect(encodeAnswer('person(ada)')).toBe('person(ada).');
-  });
-
-  it('trims surrounding whitespace', () => {
-    expect(encodeAnswer('  t \n')).toBe('t.');
-  });
-
-  it('drops a blank line rather than encoding an empty term', () => {
-    // There is no term for an empty line, so a stray Enter must not become a
-    // syntax error partway through a questionnaire.
-    expect(encodeAnswer('')).toBeNull();
-    expect(encodeAnswer('   ')).toBeNull();
-  });
-});
 
 describe('reading answers', () => {
   it('reads answers in the order they were queued', () => {
@@ -104,33 +78,104 @@ describe('reading answers', () => {
     expect(engine.takeOutput()).toBe('pertama\nyes\nkedua\nno\nselesai\n');
   });
 
-  it('returns end_of_file once the answers run out', () => {
+  /*
+   * An exhausted queue suspends rather than yielding `end_of_file`.
+   *
+   * It used to yield `end_of_file`, from the string-stream approach this was built on
+   * before the terminal existed. Suspending is the better behaviour and the reason it
+   * changed is not obvious: `end_of_file` is a *term*, so a questionnaire that tests
+   * its answer against `y` simply stops recording and falls through — which is right.
+   * But a programme that loops on `repeat, read(X), ...` never terminates, because
+   * `end_of_file` is just another value to loop over. A real terminal's stdin
+   * *blocks*, and blocking is what a questionnaire wants.
+   *
+   * So these two assert the current contract: no answers, and the query suspends.
+   */
+  it('suspends once the answers run out', () => {
     const engine = fresh();
     engine.setInput(['y']);
+    expect(answer(engine.open('ask(pertama, A).').handle, 'A')).toBe('y');
+
+    const second = engine.open('ask(kedua, A).');
+    // The host re-enters the goal, so the outcome is a suspension the caller has to
+    // recognise. `isWaitingForInput/0` is what tells the two apart.
+    expect(() => second.handle.next()).toThrow(/repl_need_input/);
+    expect(engine.isWaitingForInput()).toBe(true);
+  });
+
+  it('suspends on an empty queue rather than failing or looping', () => {
+    // Not `end_of_file`: a goal reading in a loop would take that forever instead of
+    // waiting for a person.
+    const engine = fresh();
+    engine.setInput([]);
     const { handle } = engine.open('ask(pertama, A).');
-    let first: ReturnType<PrologEngine['open']>['handle'] | null = handle;
+    try {
+      expect(() => handle.next()).toThrow(/repl_need_input/);
+      expect(engine.isWaitingForInput()).toBe(true);
+    } finally {
+      handle.close();
+    }
+  });
+
+  it('is not waiting when a goal never read anything', () => {
+    const engine = fresh();
+    engine.setInput([]);
+    const { handle } = engine.open('true.');
+    try {
+      handle.next();
+    } finally {
+      handle.close();
+    }
+    expect(engine.isWaitingForInput()).toBe(false);
+  });
+
+  it('answers are taken in order, and only once each', () => {
+    // A dynamic predicate would backtrack here and offer the first answer again, so
+    // the second read would report `y` twice. The shim's queue is not a choicepoint.
+    const engine = fresh();
+    engine.setInput(['y', 't']);
+    const { handle } = engine.open('ask(pertama, A).');
     try {
       expect(answer(handle, 'A')).toBe('y');
     } finally {
       handle.close();
     }
-    // A terminal top-level loop ends when input ends, and so does this one, which
-    // is what lets a program written for a terminal still work.
     const second = engine.open('ask(kedua, A).');
-    first = second.handle;
     try {
-      expect(answer(first, 'A')).toBe('end_of_file');
+      expect(answer(second.handle, 'A')).toBe('t');
     } finally {
-      first.close();
+      second.handle.close();
     }
+    expect(engine.isWaitingForInput()).toBe(false);
   });
 
-  it('treats an empty queue as end-of-file rather than as an error', () => {
+  it('a term with a trailing stop is the same answer as without', () => {
+    // The queue is a list literal, and the parser reads a stop there as the end of
+    // the whole clause: `repl_load([a.])` is "Syntax error: Unbalanced operator". So
+    // the stop is stripped, which makes an answer typed the way Prolog is normally
+    // written work rather than blow up.
+    //
+    // Checked through `write/1` rather than through the returned bindings, so what is
+    // asserted is that the answer reached Prolog as a compound term.
+    const engine = new PrologEngine(instance, sink);
+    engine.consult('echo(A) :- read(A), write(got(A)), nl.\n', '');
+    engine.resetOutput();
+    engine.setInput(['person(ada, prolog).']);
+    const { handle } = engine.open('echo(_).');
+    try {
+      handle.next();
+    } finally {
+      handle.close();
+    }
+    expect(engine.takeOutput()).toBe('got(person(ada,prolog))\n');
+  });
+
+  it('blank lines are dropped rather than being a parse error', () => {
     const engine = fresh();
-    engine.setInput([]);
+    engine.setInput(['', '  ', 'y', '']);
     const { handle } = engine.open('ask(pertama, A).');
     try {
-      expect(answer(handle, 'A')).toBe('end_of_file');
+      expect(answer(handle, 'A')).toBe('y');
     } finally {
       handle.close();
     }

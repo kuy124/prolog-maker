@@ -40,6 +40,7 @@
  */
 
 import type { WireBindings, WireTerm } from './protocol';
+import { REPL_SHIM } from './repl-shim';
 
 /**
  * The slice of the Emscripten module this app uses.
@@ -161,24 +162,6 @@ const FACTS_FILE = '/tmp/room/facts.pl';
  * stream needs no query at all to be read.
  */
 const TRANSCRIPT_FILE = '/tmp/room/transcript.txt';
-
-/**
- * Encodes one line of console input as a Prolog term.
- *
- * `read/1` parses a *term*, so an answer has to be terminated by a full stop:
- * `y` alone is an unterminated term and the read fails with a syntax error. A
- * line that already ends in a stop is passed through, so a full compound like
- * `person(ada)` is accepted as an answer.
- *
- * Blank lines are dropped rather than encoded: there is no term for an empty
- * line, and a stray Enter should not become a syntax error in the middle of a
- * questionnaire.
- */
-export function encodeAnswer(line: string): string | null {
-  const trimmed = line.trim();
-  if (trimmed.length === 0) return null;
-  return trimmed.endsWith('.') ? trimmed : `${trimmed}.`;
-}
 
 /**
  * Pulls `FILE:LINE:COL: Syntax error: Reason` out of the engine's stderr.
@@ -358,30 +341,64 @@ export class PrologEngine {
   }
 
   /**
-   * Installs the answers `read/1` will consume.
+   * Installs the answers `read/1` will consume, in order.
    *
-   * `read/1` cannot be fed from JavaScript. Emscripten's stdin hook only reads
-   * `process.stdin` under Node or `window.prompt` in a window, and a Web Worker
-   * has neither, so `user_input` sits at end-of-file and every `read/1` returns
-   * `end_of_file` immediately. Passing a Prolog string stream is the supported
-   * way in, and `set_input/1` is what points `read/1` at it.
+   * The queue is re-seeded from the beginning on every attempt rather than
+   * appended, which is what makes a replay idempotent: the same answers produce the
+   * same run, so the transcript already shown stays correct and nothing is offered
+   * twice.
    *
-   * Answers are consumed in order. Once they run out `read/1` returns
-   * `end_of_file`, which is exactly how a top-level loop ends when the input ends,
-   * so a program written for the terminal keeps working and stops asking.
+   * Empty when the program asks for something nobody has typed yet — that is not a
+   * mistake, it is how the shim knows to suspend. See `REPL_SHIM`.
    */
   setInput(lines: string[]): void {
-    const terms = lines.map(encodeAnswer).filter((term): term is string => term !== null);
-    // An empty stream is not the same as no input. Reading from one does not yield
-    // `end_of_file`, it fails — and a questionnaire whose `read/1` fails on the
-    // first question backtracks into its own question list and prints the rest of
-    // them before dying, instead of falling through to its default answer. One
-    // explicit `end_of_file` term gives the behaviour a top level has.
-    const text = terms.length > 0 ? terms.join('\n') : 'end_of_file.';
-    this.#ask(
-      `open_string(${JSON.stringify(text)}, S), ` +
-        `nb_setval(prolog_input, S), set_input(S).`,
-    );
+    const terms = lines
+      .map((line) => PrologEngine.term(line))
+      .filter((term): term is string => term !== null);
+    this.#ask(`repl_load([${terms.join(',')}]).`);
+  }
+
+  /**
+   * Renders one answer as a Prolog term for the shim's queue.
+   *
+   * `read/1` parses a *term*, so an answer typed as `y` has to reach Prolog as the
+   * atom `y`. It goes into a list literal, which supplies the separation itself:
+   * `[y,t,n]` is three elements.
+   *
+   * A trailing full stop is stripped. The parser reads it as the end of the whole
+   * clause and then trips over the list's closing bracket — `repl_load([a.])` is
+   * "Syntax error: Unbalanced operator" — so an answer typed the way Prolog is
+   * normally written would fail. The older string-stream approach needed the stop,
+   * because there the terms were read from text; inside a list literal it is simply
+   * wrong.
+   *
+   * Blank lines vanish too: there is no such thing as an empty term, and a stray
+   * Enter would otherwise be a parse error in the middle of a questionnaire.
+   *
+   * The one case this gets wrong is a quoted atom that genuinely ends in a stop,
+   * `'.',` which loses it. Not worth a parser to fix — nobody types that.
+   */
+  private static term(line: string): string | null {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) return null;
+    return trimmed.endsWith('.') ? trimmed.slice(0, -1).trim() : trimmed;
+  }
+
+  /**
+   * Whether the last goal suspended waiting for input.
+   *
+   * Read through a goal of its own rather than inferred from the error, because the
+   * console has to distinguish "the program asked a question" from "the program
+   * broke" — they look alike from the outside and mean opposite things to the user.
+   *
+   * The value comes back as the string `"true"`, not a boolean: the bridge renders
+   * Prolog atoms as text, and a boolean goal's success carries no bindings at all —
+   * `repl_waiting.` reads back as `true` whether it succeeded or failed. Asking for
+   * the variable is the only shape that distinguishes them.
+   */
+  isWaitingForInput(): boolean {
+    const bindings = this.#ask('repl_waiting_state(V).') as { V?: unknown };
+    return bindings?.V === 'true';
   }
 
   /**
@@ -419,11 +436,11 @@ export class PrologEngine {
    * goal for its side effect or for one answer, which keeps that discipline in
    * one place instead of scattered across the file.
    */
-  #ask(goal: string, input?: Record<string, unknown>): Record<string, unknown> {
+  #ask(goal: string, input?: Record<string, unknown>): unknown {
     this.closeAll();
     const query = this.#instance.prolog.query(goal, input);
     try {
-      return query.once() as Record<string, unknown>;
+      return query.once();
     } finally {
       try {
         query.close();
@@ -491,7 +508,11 @@ export class PrologEngine {
     this.#facts = facts;
 
     this.#instance.prolog.call("catch(make_directory('/tmp/room'), _, true)");
-    this.#instance.FS.writeFile(PROGRAM_FILE, program);
+    // The shim is prepended rather than loaded separately so that it is re-consulted
+    // with the programme on every edit. That matters: `read/1` has to be in place
+    // before any goal runs, and a separately-loaded file could be dropped by the
+    // build or left stale by a redeploy.
+    this.#instance.FS.writeFile(PROGRAM_FILE, `${REPL_SHIM}\n${program}`);
     this.#instance.FS.writeFile(FACTS_FILE, facts);
 
     // Qualified as `user:` so the load lands in the module the console queries.

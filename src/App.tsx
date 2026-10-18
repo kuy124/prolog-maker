@@ -44,6 +44,12 @@ import {
   type RoomFile,
 } from './model/snapshot';
 import { EXAMPLES, exampleById } from './model/examples';
+import {
+  answer,
+  startSession,
+  suspend,
+  type Session as ReplSession,
+} from './model/session';
 import { savedTheme, rememberTheme, applyTheme } from './ui/theme';
 import type { WireBindings } from './engine/protocol';
 
@@ -120,11 +126,14 @@ export function App() {
     return () => query?.removeEventListener('change', onChange);
   }, [theme]);
 
-  const openRoom = useCallback((room: string, seed: Session['seed'], fromLink: boolean) => {
-    rememberRoom(room);
-    window.location.hash = `room=${encodeURIComponent(room)}`;
-    setSession({ room, seed, fromLink });
-  }, []);
+  const openRoom = useCallback(
+    (room: string, seed: Session['seed'], fromLink: boolean) => {
+      rememberRoom(room);
+      window.location.hash = `room=${encodeURIComponent(room)}`;
+      setSession({ room, seed, fromLink });
+    },
+    [],
+  );
 
   const newRoom = useCallback(() => {
     openRoom(newRoomId(), null, false);
@@ -172,12 +181,17 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
   const [currentQuery, setCurrentQuery] = useState<number | null>(null);
   const [goal, setGoal] = useState(START_GOAL);
   /**
-   * Answers queued for `read/1`.
+   * The suspended goal, or null when nothing is waiting for an answer.
    *
-   * Held here rather than in the console so a run can attach them, and kept after
-   * the run so the same questionnaire can be tried again with different answers.
+   * This is what turns a questionnaire into a terminal. A goal that calls `read/1`
+   * cannot be paused and resumed directly in a worker — no input path, `await/2` is
+   * gated, and a blocking wait needs headers a static host cannot send. Instead the
+   * goal is re-entered with one more answer available, which replays the deterministic
+   * prefix and carries on from the question. The prefix produces the same output it
+   * did last time, so only what follows the question is new and the user sees one
+   * continuous session.
    */
-  const [answers, setAnswers] = useState<string[]>([]);
+  const [repl, setRepl] = useState<ReplSession | null>(null);
 
   const [dialog, setDialog] = useState<'share' | 'export' | 'help' | 'examples' | null>(null);
 
@@ -185,6 +199,14 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
   const outputBuffer = useRef<string[]>([]);
   const programRef = useRef('');
   const factsRef = useRef<Fact[]>([]);
+  /**
+   * The session, in a ref as well as state.
+   *
+   * The engine callbacks are created once, when the engine starts, so they cannot
+   * close over state that changes. A ref is what lets them see the current session
+   * without being rebuilt on every answer.
+   */
+  const sessionRef = useRef<ReplSession | null>(null);
 
   // ---------------------------------------------------------------- the room
 
@@ -291,6 +313,15 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
         setExhausted(true);
         setQueryError(message);
       },
+      onNeedsInput: () => {
+        // The programme asked a question. It is not busy — it is waiting — so the
+        // console shows a prompt rather than a Stop button, and Stop is not offered
+        // because there is nothing to interrupt: the worker is idle between steps.
+        const current = sessionRef.current;
+        sessionRef.current = current ? suspend(current) : startSession('');
+        setRepl(sessionRef.current);
+        setBusy(false);
+      },
       onOutput: (text) => {
         outputBuffer.current = [...outputBuffer.current, text];
         setOutput(outputBuffer.current);
@@ -349,12 +380,26 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
 
   // ---------------------------------------------------------------- actions
 
+  /**
+   * Clears the transcript.
+   *
+   * Called on a fresh run, and on a resume — which looks like the opposite of what
+   * it should be, and is not. A resumed goal is re-entered, so the engine reprints
+   * everything it printed last time, identically, before carrying on past the
+   * question. The buffer therefore has to start empty for the new attempt, or the
+   * replayed prefix lands on top of the original and the user sees each line twice.
+   * What they end up seeing is the whole session, exactly once, which is what a
+   * terminal shows.
+   */
+  const resetOutput = useCallback(() => {
+    outputBuffer.current = [];
+    setOutput([]);
+  }, []);
+
   const run = useCallback(
     (goalText: string) => {
       const client = engineRef.current;
       if (!client) return;
-      outputBuffer.current = [];
-      setOutput([]);
       setRows([]);
       setVariables([]);
       setExhausted(false);
@@ -366,11 +411,19 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
       // Consult immediately so the goal sees the text on screen, not the version
       // from up to 400ms ago.
       client.consult(programRef.current, factsSource(factsRef.current));
-      // Answers go first so the worker installs them before the goal asks. An
-      // empty queue still clears any answers left over from a previous run, so a
-      // second run cannot consume answers the user thought they had spent.
-      client.input(answers);
+      // No answers to begin with: a goal that asks one suspends and comes back
+      // through `answer`, which is what makes it a terminal rather than a form.
+      client.input([]);
       client.open(goalText);
+      // Set through the ref as well as the state: the engine callbacks were created
+      // once, when the engine started, so they read `sessionRef` rather than this
+      // render's state. Leaving the ref empty means a suspension has no goal to
+      // resume and the resume tries to run nothing.
+      const started = startSession(goalText);
+      sessionRef.current = started;
+      setRepl(started);
+      resetOutput();
+
       if (identity) room?.awareness.setLocalStateField('goal', goalText);
       room?.awareness.setLocalStateField('running', true);
       appendLog(room!.ydoc, {
@@ -382,7 +435,30 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
         at: Date.now(),
       });
     },
-    [identity, room, answers],
+    [identity, room],
+    );
+
+  /**
+   * Sends one answer and resumes.
+   *
+   * Every answer so far goes to the engine, not just the new one. The goal is
+   * re-entered from the top, so it takes them again in order — reproducing the
+   * output already shown — and stops at the next question.
+   */
+  const sendAnswer = useCallback(
+    (line: string) => {
+      const client = engineRef.current;
+      const current = sessionRef.current;
+      if (!client || !current) return;
+      const withAnswer = answer(current, line);
+      sessionRef.current = withAnswer;
+      setRepl(withAnswer);
+      resetOutput();
+      client.input(withAnswer.answers);
+      client.open(current.goal);
+      setBusy(true);
+    },
+    [resetOutput],
   );
 
   const next = useCallback(() => {
@@ -392,6 +468,15 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
   }, [currentQuery]);
 
   const stop = useCallback(() => {
+    // A goal stopped at a question has nothing running to interrupt — the worker is
+    // idle between steps — so restarting the engine would be pure cost. Only the
+    // session is dropped, which is what puts the prompt back into goal mode.
+    if (sessionRef.current?.waiting) {
+      sessionRef.current = null;
+      setRepl(null);
+      setBusy(false);
+      return;
+    }
     engineRef.current?.stop();
     setBusy(false);
     room?.awareness.setLocalStateField('running', false);
@@ -633,8 +718,8 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
             ready={ready}
             goal={goal}
             onGoalChange={setGoal}
-            answers={answers}
-            onAnswersChange={setAnswers}
+            onAnswer={sendAnswer}
+            waiting={repl?.waiting ?? false}
           />
           <FactsPanel
             facts={facts}
@@ -769,3 +854,11 @@ function isTyping(target: EventTarget | null): boolean {
 }
 
 export { isTyping };
+
+
+
+
+
+
+
+

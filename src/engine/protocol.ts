@@ -35,6 +35,7 @@ export type WireBindings = Record<string, WireTerm>;
 export type EngineRequest =
   | { id: number; kind: 'boot' }
   | { id: number; kind: 'consult'; program: string; facts: string }
+  /** Seeds the answers `read/1` will consume, in order. Empty means "suspend". */
   | { id: number; kind: 'input'; lines: string[] }
   | { id: number; kind: 'open'; goal: string }
   | { id: number; kind: 'next'; query: number }
@@ -50,5 +51,14 @@ export type EngineResponse =
   | { id: number; kind: 'solution'; query: number; bindings: WireBindings; more: boolean }
   | { id: number; kind: 'done'; query: number }
   | { id: number; kind: 'queryError'; query: number; message: string }
+  /**
+   * The goal suspended at a `read/1`.
+   *
+   * Not an error: the program asked a question and is waiting for an answer. It is
+   * reported separately because from the outside it looks identical to a failure, and
+   * the two mean opposite things to whoever is using the console.
+   */
+  | { id: number; kind: 'needsInput' }
   | { id: number; kind: 'output'; text: string }
   | { id: number; kind: 'failed'; message: string };
+

@@ -1,17 +1,22 @@
 /**
- * The console: one goal at a time, stepped solution by solution.
+ * The console: one goal at a time, stepped solution by solution, and a prompt you
+ * can answer.
  *
- * The shape of this component is dictated by the engine. A goal is opened once
- * and stepped with `next()`, so a query with a million solutions shows its first
- * ten without computing the rest. Because the engine bridge allows only one open
- * query, starting a new goal closes the previous one — which is also why the
- * results table is a snapshot of what has been collected so far rather than a
- * live view of the engine.
+ * The shape of this component is dictated by the engine. A goal is opened once and
+ * stepped with `next()`, so a query with a million solutions shows its first few
+ * without computing the rest. Because the bridge allows only one open query,
+ * starting a new goal closes the previous one — which is also why the results table
+ * is a snapshot of what has been collected rather than a live view.
+ *
+ * A goal that calls `read/1` suspends and comes back here for an answer. From the
+ * outside a suspension is indistinguishable from a failure, so the console is told
+ * about it separately and shows a prompt; treating it as an error would tell people
+ * their programme crashed when it is waiting for them.
  *
  * Stop restarts the engine rather than interrupting it: a Prolog goal cannot be
- * interrupted in this build, so the worker is terminated and replaced. The
- * results already collected stay on screen, because losing them would punish the
- * user for stopping a goal that was simply taking too long.
+ * interrupted in this build, so the worker is terminated and replaced. Results
+ * already collected stay on screen, because losing them would punish stopping a goal
+ * that was merely taking too long.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -19,8 +24,10 @@ import { decodeBindings, formatTerm, isEmptySolution, type Term } from '../model
 import type { WireBindings } from '../engine/protocol';
 
 export interface ConsoleProps {
-  /** Runs `goal`, returning a handle the console can step. Null when it failed. */
+  /** Runs `goal`. */
   onRun: (goal: string) => void;
+  /** Continues a suspended goal after an answer has been given. */
+  onAnswer: (answer: string) => void;
   onNext: () => void;
   onStop: () => void;
   onClear: () => void;
@@ -37,32 +44,30 @@ export interface ConsoleProps {
   /** Set when the engine is still booting, so Run can be disabled honestly. */
   ready: boolean;
   /**
-   * The goal text, controlled by the app.
+   * True while the goal is stopped at a `read/1`.
    *
-   * It lives in the app rather than in this component so the global
-   * Control+Enter shortcut and the Run button cannot disagree about which goal
-   * to run. A local copy made them drift: typing a goal and pressing the
-   * shortcut would run the previous one.
+   * This is what turns the input row into a prompt: the terminal is waiting for the
+   * next line, exactly as it would be in a real Prolog session.
    */
+  waiting: boolean;
+  /** The goal last typed, so it survives being answered. */
   goal: string;
-  onGoalChange: (goal: string) => void;
   /**
-   * Answers queued for `read/1`, in the order the program will consume them.
+   * Reports the typed text upward as it changes.
    *
-   * `read/1` cannot be fed live: this WebAssembly build has no way to deliver a
-   * keystroke to a goal that is already blocked inside it, because stopping a goal
-   * means terminating the worker. So answers are queued first and attached to the
-   * run, which is how a terminal session reads anyway — you have the answers
-   * before the questions start.
+   * The goal is not read from this input directly, because the global Control+Enter
+   * shortcut can fire while focus is anywhere on the page and must run what is on
+   * screen. Without this the shortcut runs whatever was typed last, which is the
+   * wrong goal whenever the two have drifted apart.
    */
-  answers: string[];
-  onAnswersChange: (answers: string[]) => void;
+  onGoalChange: (goal: string) => void;
 }
 
 const PAGE = 100;
 
 export function Console({
   onRun,
+  onAnswer,
   onNext,
   onStop,
   onClear,
@@ -73,15 +78,14 @@ export function Console({
   error,
   output,
   ready,
+  waiting,
   goal,
   onGoalChange,
-  answers,
-  onAnswersChange,
 }: ConsoleProps) {
   const [shown, setShown] = useState(PAGE);
-  const [draftAnswer, setDraftAnswer] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [draft, setDraft] = useState('');
   const outputRef = useRef<HTMLPreElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setShown(PAGE);
@@ -93,77 +97,147 @@ export function Console({
     if (element) element.scrollTop = element.scrollHeight;
   }, [output]);
 
-  const run = useCallback(() => {
-    const trimmed = goal.trim();
-    if (trimmed.length === 0) return;
-    onRun(trimmed);
-  }, [goal, onRun]);
-
-  /**
-   * Queues one answer.
+  /*
+   * Focus follows the prompt.
    *
-   * Enter commits rather than submitting, so a questionnaire can be filled in
-   * quickly — six `y` presses instead of six tab-and-button round trips. The
-   * draft is cleared either way, because leaving the text in place invites the
-   * same answer being queued twice by accident.
+   * When the programme asks a question, the only useful thing to do is answer it,
+   * so the caret goes there without being asked. Without this, a questionnaire runs
+   * to its first question and waits for a click that has no obvious target.
    */
-  const queueAnswer = useCallback(() => {
-    const value = draftAnswer.trim();
-    setDraftAnswer('');
-    if (value.length === 0) return;
-    onAnswersChange([...answers, value]);
-  }, [draftAnswer, answers, onAnswersChange]);
+  useEffect(() => {
+    if (waiting) inputRef.current?.focus();
+  }, [waiting]);
+
+  
+
+  const submit = useCallback(() => {
+    const trimmed = draft.trim();
+    if (trimmed.length === 0) return;
+    setDraft('');
+    if (waiting) onAnswer(trimmed);
+    else {
+      onGoalChange(trimmed);
+      onRun(trimmed);
+    }
+  }, [draft, waiting, onAnswer, onGoalChange, onRun]);
+
+  /*
+   * Every keystroke is reported upward, not just on submit, so the global
+   * Control+Enter shortcut runs what is on screen even if the goal has never been
+   * submitted. While the programme is waiting the text is an answer rather than a
+   * goal, so it is not reported — otherwise answering a questionnaire would quietly
+   * replace the goal it belongs to.
+   */
+  const onDraft = useCallback(
+    (text: string) => {
+      setDraft(text);
+      if (!waiting) onGoalChange(text);
+    },
+    [waiting, onGoalChange],
+  );
+
+  /*
+   * Once the programme is waiting, the goal is already running: the text typed here
+   * is an answer, not a new goal. Keeping the goal around and letting the app
+   * remember it avoids the alternative, which is this input going blank the moment a
+   * question is asked, and the goal being lost with it.
+   */
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter') {
       event.preventDefault();
-      run();
-    }
-  };
-
-  const onAnswerKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      queueAnswer();
+      submit();
     }
   };
 
   const columns = variables.length > 0 ? variables : inferColumns(rows);
   const visible = rows.slice(0, shown);
   // A goal that binds nothing still has an answer, and Prolog's top level prints
-  // `true.` for it. Rendering it as a bare row number would lose that, so the
-  // table grows a single Result column when there is nothing to show bindings in.
+  // `true.` for it. Rendering it as a bare row number would lose that, so the table
+  // grows a single Result column when there is nothing to show bindings in.
   const heading = columns.length > 0 ? columns : ['Result'];
 
   return (
     <section className="console" aria-label="Query console">
-      <div className="console__prompt">
+      {output.length > 0 ? (
+        <div className="terminal">
+          <p className="terminal__label" id="output-label">
+            Output
+          </p>
+          <pre ref={outputRef} className="terminal__text" aria-labelledby="output-label" tabIndex={0}>
+            {output.join('')}
+          </pre>
+        </div>
+      ) : null}
+
+      {/*
+        One input, for both jobs.
+
+        It runs a goal when nothing is pending, and answers a question when something
+        is. That is how a Prolog top level behaves — one prompt, and what it means
+        depends on what the programme last did — and it is why there is no separate box
+        for "answers" that has to be filled in before anything can run.
+      */}
+      <form
+        className={waiting ? 'console__prompt console__prompt--waiting' : 'console__prompt'}
+        onSubmit={(event) => {
+          event.preventDefault();
+          submit();
+        }}
+      >
         <span className="console__sigil" aria-hidden="true">
-          ?-
+          {waiting ? '|' : '?-'}
         </span>
         <input
           ref={inputRef}
           className="console__input"
-          value={goal}
-          onChange={(event) => onGoalChange(event.target.value)}
+          // While the programme is waiting, this is its prompt and must not be
+          // re-seeded with the goal text: overwriting a half-typed answer with a
+          // remembered goal is the kind of thing that loses work.
+          value={draft}
+          onChange={(event) => onDraft(event.target.value)}
           onKeyDown={onKeyDown}
-          placeholder="likes(ada, X)"
-          aria-label="Goal"
+          placeholder={waiting ? 'answer, then press Enter' : 'likes(ada, X)'}
+          aria-label={waiting ? 'Answer' : 'Goal'}
+          autoComplete="off"
           spellCheck={false}
           autoCapitalize="off"
           autoCorrect="off"
-          autoComplete="off"
+          disabled={!ready && !waiting}
         />
-        {busy ? (
+        {waiting ? (
+          <>
+            <button type="submit" className="btn btn--primary">
+              Answer
+            </button>
+            {/*
+              The way out of a questionnaire.
+
+              Every line typed at a waiting prompt is an answer, so without this there
+              is no way to abandon one — a mistyped answer or a goal nobody wants any
+              more leaves the console waiting forever, with no way to run anything
+              else. Stopping a waiting goal costs nothing: there is nothing running.
+            */}
+            <button type="button" className="btn" onClick={onStop}>
+              Stop
+            </button>
+          </>
+        ) : busy ? (
           <button type="button" className="btn btn--danger" onClick={onStop}>
             Stop
           </button>
         ) : (
-          <button type="button" className="btn btn--primary" onClick={run} disabled={!ready}>
+          <button type="submit" className="btn btn--primary" disabled={!ready}>
             Run
           </button>
         )}
-      </div>
+      </form>
+
+      {waiting ? (
+        <p className="note note--waiting" role="status">
+          <code className="note__goal">{goal}</code> is waiting for an answer.
+        </p>
+      ) : null}
 
       {!ready ? <p className="note">Starting the engine…</p> : null}
 
@@ -172,84 +246,6 @@ export function Console({
           {error}
         </p>
       ) : null}
-
-      {output.length > 0 ? (
-        <div className="terminal">
-          <p className="terminal__label" id="output-label">
-            Output
-          </p>
-          <pre
-            ref={outputRef}
-            className="terminal__text"
-            aria-labelledby="output-label"
-            tabIndex={0}
-          >
-            {output.join('')}
-          </pre>
-        </div>
-      ) : null}
-
-      {/*
-        The answer queue. It sits directly under the transcript because that is
-        where the program's questions appear, and it stays in place after a run so
-        the same questionnaire can be re-run with different answers — which is the
-        whole point of an expert system.
-      */}
-      <div className="answers">
-        <label className="answers__label" htmlFor="answer-input">
-          Answers for <code>read/1</code>
-        </label>
-        <div className="answers__row">
-          <input
-            id="answer-input"
-            className="answers__input"
-            value={draftAnswer}
-            onChange={(event) => setDraftAnswer(event.target.value)}
-            onKeyDown={onAnswerKeyDown}
-            placeholder="y"
-            aria-describedby="answers-help"
-            spellCheck={false}
-            autoCapitalize="off"
-            autoCorrect="off"
-            autoComplete="off"
-          />
-          <button type="button" className="btn btn--small" onClick={queueAnswer}>
-            Add
-          </button>
-          {answers.length > 0 ? (
-            <button
-              type="button"
-              className="btn btn--quiet btn--small"
-              onClick={() => onAnswersChange([])}
-            >
-              Clear
-            </button>
-          ) : null}
-        </div>
-
-        {answers.length > 0 ? (
-          <ul className="answers__list">
-            {answers.map((answer, index) => (
-              <li key={`${index}-${answer}`} className="answers__chip">
-                <code>{answer}</code>
-                <button
-                  type="button"
-                  onClick={() => onAnswersChange(answers.filter((_, i) => i !== index))}
-                  aria-label={`Remove answer ${index + 1}, ${answer}`}
-                >
-                  ×
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-
-        <p className="answers__help" id="answers-help">
-          {answers.length > 0
-            ? `${answers.length} queued, in order. Press Run to attach them.`
-            : 'A goal that calls read/1 needs its answers queued first — they cannot be typed into a goal that is already waiting.'}
-        </p>
-      </div>
 
       {rows.length > 0 ? (
         <div className="console__results">
@@ -315,9 +311,7 @@ export function Console({
         </div>
       ) : null}
 
-      {rows.length === 0 && exhausted && !error ? (
-        <p className="note">No solutions.</p>
-      ) : null}
+      {rows.length === 0 && exhausted && !error ? <p className="note">No solutions.</p> : null}
     </section>
   );
 }
@@ -332,3 +326,5 @@ function inferColumns(rows: WireBindings[]): string[] {
 function renderCell(term: Term | undefined): string {
   return term ? formatTerm(term) : '—';
 }
+
+

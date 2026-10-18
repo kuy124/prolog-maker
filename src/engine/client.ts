@@ -41,6 +41,8 @@ type Handler = {
   onSolution: (query: number, solution: SolutionMessage) => void;
   onDone: (query: number) => void;
   onQueryError: (query: number, message: string) => void;
+  /** The goal suspended at a `read/1` and is waiting for an answer. */
+  onNeedsInput: () => void;
   onOutput: (text: string) => void;
   onFailed: (message: string) => void;
 };
@@ -185,6 +187,9 @@ export class EngineClient {
         handler.onConsultError(message.message, message.line);
         break;
       case 'inputSet':
+        break;
+      case 'needsInput':
+        handler.onNeedsInput();
         break;
       case 'opened':
         handler.onOpened(message.query, message.variables);

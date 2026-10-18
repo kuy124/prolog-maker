@@ -15,6 +15,7 @@
  */
 
 import { PrologEngine, bootEngine, type OutputSink } from './engine';
+import { isNeedingInput } from './repl-shim';
 import type { EngineRequest, EngineResponse } from './protocol';
 
 declare const SWIPL: (options: Record<string, unknown>) => Promise<unknown>;
@@ -167,7 +168,7 @@ scope.onmessage = (event: MessageEvent<EngineRequest>) => {
           try {
             const solution = handle.next();
             // Output is drained before every reply, so a goal that writes before
-            // it fails still leaves its transcript behind.
+            // it stops still leaves its transcript behind.
             emit();
             if (!solution) {
               open.delete(request.query);
@@ -188,11 +189,20 @@ scope.onmessage = (event: MessageEvent<EngineRequest>) => {
           } catch (error) {
             emit();
             open.delete(request.query);
+            const message = String((error as Error)?.message ?? 'The goal failed.');
+            // A suspension arrives as an exception, because that is the only thing
+            // that stops a goal mid-execution in a worker. It is reported as itself
+            // rather than as a failure: the program asked a question, and it is
+            // waiting for an answer, which is not an error.
+            if (isNeedingInput(message)) {
+              reply({ id: request.id, kind: 'needsInput' });
+              break;
+            }
             reply({
               id: request.id,
               kind: 'queryError',
               query: request.query,
-              message: String((error as Error)?.message ?? 'The goal failed.'),
+              message,
             });
           }
           break;
