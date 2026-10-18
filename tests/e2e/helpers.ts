@@ -61,7 +61,7 @@ export async function readRows(page: Page): Promise<string[]> {
 
 /** The engine's own output pane, which is where `write/1` lands. */
 export async function readOutput(page: Page): Promise<string> {
-  const output = page.locator('.console__output');
+  const output = page.locator('.terminal__text');
   if ((await output.count()) === 0) return '';
   return (await output.innerText()).trim();
 }

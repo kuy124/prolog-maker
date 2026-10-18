@@ -46,6 +46,17 @@ export interface ConsoleProps {
    */
   goal: string;
   onGoalChange: (goal: string) => void;
+  /**
+   * Answers queued for `read/1`, in the order the program will consume them.
+   *
+   * `read/1` cannot be fed live: this WebAssembly build has no way to deliver a
+   * keystroke to a goal that is already blocked inside it, because stopping a goal
+   * means terminating the worker. So answers are queued first and attached to the
+   * run, which is how a terminal session reads anyway — you have the answers
+   * before the questions start.
+   */
+  answers: string[];
+  onAnswersChange: (answers: string[]) => void;
 }
 
 const PAGE = 100;
@@ -64,8 +75,11 @@ export function Console({
   ready,
   goal,
   onGoalChange,
+  answers,
+  onAnswersChange,
 }: ConsoleProps) {
   const [shown, setShown] = useState(PAGE);
+  const [draftAnswer, setDraftAnswer] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const outputRef = useRef<HTMLPreElement>(null);
 
@@ -85,6 +99,21 @@ export function Console({
     onRun(trimmed);
   }, [goal, onRun]);
 
+  /**
+   * Queues one answer.
+   *
+   * Enter commits rather than submitting, so a questionnaire can be filled in
+   * quickly — six `y` presses instead of six tab-and-button round trips. The
+   * draft is cleared either way, because leaving the text in place invites the
+   * same answer being queued twice by accident.
+   */
+  const queueAnswer = useCallback(() => {
+    const value = draftAnswer.trim();
+    setDraftAnswer('');
+    if (value.length === 0) return;
+    onAnswersChange([...answers, value]);
+  }, [draftAnswer, answers, onAnswersChange]);
+
   const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter') {
       event.preventDefault();
@@ -92,8 +121,19 @@ export function Console({
     }
   };
 
+  const onAnswerKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      queueAnswer();
+    }
+  };
+
   const columns = variables.length > 0 ? variables : inferColumns(rows);
   const visible = rows.slice(0, shown);
+  // A goal that binds nothing still has an answer, and Prolog's top level prints
+  // `true.` for it. Rendering it as a bare row number would lose that, so the
+  // table grows a single Result column when there is nothing to show bindings in.
+  const heading = columns.length > 0 ? columns : ['Result'];
 
   return (
     <section className="console" aria-label="Query console">
@@ -134,17 +174,89 @@ export function Console({
       ) : null}
 
       {output.length > 0 ? (
-        <pre ref={outputRef} className="console__output" aria-label="Program output">
-          {output.join('')}
-        </pre>
+        <div className="terminal">
+          <p className="terminal__label" id="output-label">
+            Output
+          </p>
+          <pre
+            ref={outputRef}
+            className="terminal__text"
+            aria-labelledby="output-label"
+            tabIndex={0}
+          >
+            {output.join('')}
+          </pre>
+        </div>
       ) : null}
+
+      {/*
+        The answer queue. It sits directly under the transcript because that is
+        where the program's questions appear, and it stays in place after a run so
+        the same questionnaire can be re-run with different answers — which is the
+        whole point of an expert system.
+      */}
+      <div className="answers">
+        <label className="answers__label" htmlFor="answer-input">
+          Answers for <code>read/1</code>
+        </label>
+        <div className="answers__row">
+          <input
+            id="answer-input"
+            className="answers__input"
+            value={draftAnswer}
+            onChange={(event) => setDraftAnswer(event.target.value)}
+            onKeyDown={onAnswerKeyDown}
+            placeholder="y"
+            aria-describedby="answers-help"
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+            autoComplete="off"
+          />
+          <button type="button" className="btn btn--small" onClick={queueAnswer}>
+            Add
+          </button>
+          {answers.length > 0 ? (
+            <button
+              type="button"
+              className="btn btn--quiet btn--small"
+              onClick={() => onAnswersChange([])}
+            >
+              Clear
+            </button>
+          ) : null}
+        </div>
+
+        {answers.length > 0 ? (
+          <ul className="answers__list">
+            {answers.map((answer, index) => (
+              <li key={`${index}-${answer}`} className="answers__chip">
+                <code>{answer}</code>
+                <button
+                  type="button"
+                  onClick={() => onAnswersChange(answers.filter((_, i) => i !== index))}
+                  aria-label={`Remove answer ${index + 1}, ${answer}`}
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        <p className="answers__help" id="answers-help">
+          {answers.length > 0
+            ? `${answers.length} queued, in order. Press Run to attach them.`
+            : 'A goal that calls read/1 needs its answers queued first — they cannot be typed into a goal that is already waiting.'}
+        </p>
+      </div>
 
       {rows.length > 0 ? (
         <div className="console__results">
           <table className="results">
             <thead>
               <tr>
-                {columns.map((column) => (
+                {heading.map((column) => (
                   <th key={column} scope="col">
                     {column}
                   </th>
@@ -169,6 +281,11 @@ export function Console({
                         )}
                       </td>
                     ))}
+                    {columns.length === 0 ? (
+                      <td>
+                        <span className="results__yes">yes</span>
+                      </td>
+                    ) : null}
                     <td className="results__index">{index + 1}</td>
                   </tr>
                 );

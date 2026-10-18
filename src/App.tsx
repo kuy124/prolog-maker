@@ -171,6 +171,13 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
   const [output, setOutput] = useState<string[]>([]);
   const [currentQuery, setCurrentQuery] = useState<number | null>(null);
   const [goal, setGoal] = useState(START_GOAL);
+  /**
+   * Answers queued for `read/1`.
+   *
+   * Held here rather than in the console so a run can attach them, and kept after
+   * the run so the same questionnaire can be tried again with different answers.
+   */
+  const [answers, setAnswers] = useState<string[]>([]);
 
   const [dialog, setDialog] = useState<'share' | 'export' | 'help' | 'examples' | null>(null);
 
@@ -359,6 +366,10 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
       // Consult immediately so the goal sees the text on screen, not the version
       // from up to 400ms ago.
       client.consult(programRef.current, factsSource(factsRef.current));
+      // Answers go first so the worker installs them before the goal asks. An
+      // empty queue still clears any answers left over from a previous run, so a
+      // second run cannot consume answers the user thought they had spent.
+      client.input(answers);
       client.open(goalText);
       if (identity) room?.awareness.setLocalStateField('goal', goalText);
       room?.awareness.setLocalStateField('running', true);
@@ -371,7 +382,7 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
         at: Date.now(),
       });
     },
-    [identity, room],
+    [identity, room, answers],
   );
 
   const next = useCallback(() => {
@@ -622,6 +633,8 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
             ready={ready}
             goal={goal}
             onGoalChange={setGoal}
+            answers={answers}
+            onAnswersChange={setAnswers}
           />
           <FactsPanel
             facts={facts}

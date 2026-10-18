@@ -115,6 +115,17 @@ export class EngineClient {
   }
 
   /**
+   * Installs the answers `read/1` will consume, in order.
+   *
+   * Sent as its own message so it can be queued ahead of `open`. The worker
+   * handles messages in order, so the answers are in place before the goal that
+   * asks for them starts.
+   */
+  input(lines: string[]): void {
+    this.#send({ id: this.#nextId++, kind: 'input', lines });
+  }
+
+  /**
    * Starts a goal, once the worker has a program loaded.
    *
    * Deferring is what makes Stop usable: the replacement worker needs a few
@@ -172,6 +183,8 @@ export class EngineClient {
         // hanging forever waiting for a consult that will never succeed.
         this.#markReady();
         handler.onConsultError(message.message, message.line);
+        break;
+      case 'inputSet':
         break;
       case 'opened':
         handler.onOpened(message.query, message.variables);

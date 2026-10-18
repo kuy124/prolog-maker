@@ -1,0 +1,120 @@
+﻿
+> prolog-maker@0.1.0 verify
+> npm run test && npm run build && npm run test:e2e
+
+
+> prolog-maker@0.1.0 test
+> vitest run
+
+
+ RUN  v5.0.5 F:/GAMES/Code/PROLOG MAKER
+
+
+ Test Files  8 passed (8)
+      Tests  171 passed (171)
+   Start at  23:11:08
+   Duration  2.79s (import 68%, tests 26%, worker 3%, transform 2%)
+
+    Isolate  8 workers spawned ┬╖ ~376ms startup each (spawn + environment, per file)
+             at least ~627ms faster with isolate: false ΓÇö reuses workers across files instead of one per file
+
+
+> prolog-maker@0.1.0 prebuild
+> npm run vendor
+
+
+> prolog-maker@0.1.0 vendor
+> node scripts/vendor-engine.mjs
+
+engine: swipl-wasm@8.2.3 -> public/engine (4.1 MB)
+  swipl-web.js     0.19 MB
+  swipl-web.wasm   2.28 MB
+  swipl-web.data   1.66 MB
+
+> prolog-maker@0.1.0 build
+> tsc -b && vite build
+
+[36mvite v8.3.4 [32mbuilding client environment for production...[36m[39m
+transforming...
+Γ£ô 78 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                          0.66 kB Γöé gzip:   0.39 kB
+dist/assets/engine.worker-DGrx5aeR.js    7.14 kB
+dist/assets/index-g8j-AcKr.css          16.28 kB Γöé gzip:   3.82 kB
+dist/assets/index-DYcjKbTh.js          386.71 kB Γöé gzip: 119.97 kB
+
+[32mΓ£ô built in 325ms[39m
+
+> prolog-maker@0.1.0 test:e2e
+> playwright test
+
+[WebServer] 
+[WebServer] > prolog-maker@0.1.0 prebuild
+[WebServer] > npm run vendor
+[WebServer] 
+[WebServer] 
+[WebServer] > prolog-maker@0.1.0 vendor
+[WebServer] > node scripts/vendor-engine.mjs
+[WebServer] 
+[WebServer] engine: swipl-wasm@8.2.3 -> public/engine (4.1 MB)
+[WebServer]   swipl-web.js     0.19 MB
+[WebServer]   swipl-web.wasm   2.28 MB
+[WebServer]   swipl-web.data   1.66 MB
+[WebServer] 
+[WebServer] > prolog-maker@0.1.0 build
+[WebServer] > tsc -b && vite build
+[WebServer] 
+[WebServer] vite v8.3.4 building client environment for production...
+[WebServer] transforming...
+[WebServer] Γ£ô 78 modules transformed.
+[WebServer] rendering chunks...
+[WebServer] computing gzip size...
+[WebServer] dist/index.html                          0.66 kB Γöé gzip:   0.39 kB
+[WebServer] dist/assets/engine.worker-DGrx5aeR.js    7.14 kB
+[WebServer] dist/assets/index-g8j-AcKr.css          16.28 kB Γöé gzip:   3.82 kB
+[WebServer] dist/assets/index-DYcjKbTh.js          386.71 kB Γöé gzip: 119.97 kB
+[WebServer] 
+[WebServer] Γ£ô built in 342ms
+[WebServer] 
+[WebServer] > prolog-maker@0.1.0 preview
+[WebServer] > vite preview --host 127.0.0.1 --port 4173 --strictPort
+[WebServer] 
+[WebServer]   Γ₧£  Local:   http://127.0.0.1:4173/
+[WebServer] Signaling server running on localhost: 4444
+
+Running 31 tests using 3 workers
+
+  ok  1 [chromium] ΓÇ║ tests\e2e\access.spec.ts:41:1 ΓÇ║ has no accessibility violations with a dialog open (4.7s)
+  ok  2 [chromium] ΓÇ║ tests\e2e\access.spec.ts:14:1 ΓÇ║ has no accessibility violations in the light theme (4.8s)
+  ok  3 [chromium] ΓÇ║ tests\e2e\access.spec.ts:27:1 ΓÇ║ has no accessibility violations in the dark theme (4.6s)
+  ok  4 [chromium] ΓÇ║ tests\e2e\access.spec.ts:54:1 ΓÇ║ runs the typed goal with Control and Enter (2.5s)
+  ok  6 [chromium] ΓÇ║ tests\e2e\access.spec.ts:81:1 ΓÇ║ closes a dialog with Escape (2.4s)
+  ok  5 [chromium] ΓÇ║ tests\e2e\access.spec.ts:68:1 ΓÇ║ runs the console goal with Control and Enter from elsewhere on the page (3.0s)
+  ok  8 [chromium] ΓÇ║ tests\e2e\access.spec.ts:112:1 ΓÇ║ records a query in the shared log (2.4s)
+  ok  7 [chromium] ΓÇ║ tests\e2e\access.spec.ts:90:1 ΓÇ║ themes the page without losing the program (4.3s)
+  ok  9 [chromium] ΓÇ║ tests\e2e\access.spec.ts:132:1 ΓÇ║ a goal that never returns can be stopped (4.6s)
+  ok 10 [chromium] ΓÇ║ tests\e2e\collab.spec.ts:28:1 ΓÇ║ two browsers connect and see each other (8.0s)
+  ok 12 [chromium] ΓÇ║ tests\e2e\collab.spec.ts:75:1 ΓÇ║ concurrent typing in different places merges without losing either edit (8.5s)
+  ok 14 [chromium] ΓÇ║ tests\e2e\collab.spec.ts:147:1 ΓÇ║ a shared snapshot link opens the program with nobody online (4.7s)
+  ok 13 [chromium] ΓÇ║ tests\e2e\collab.spec.ts:113:1 ΓÇ║ a fact added in one browser is usable in the other (8.2s)
+  ok 11 [chromium] ΓÇ║ tests\e2e\collab.spec.ts:50:1 ΓÇ║ an edit in one browser appears in the other (15.0s)
+  ok 16 [chromium] ΓÇ║ tests\e2e\editor.spec.ts:19:1 ΓÇ║ the line numbers follow the text when the editor scrolls (3.9s)
+  ok 15 [chromium] ΓÇ║ tests\e2e\collab.spec.ts:176:1 ΓÇ║ a reload keeps the program without any peer (6.3s)
+  ok 17 [chromium] ΓÇ║ tests\e2e\editor.spec.ts:57:1 ΓÇ║ the local caret survives an edit made by somebody else (7.4s)
+  ok 18 [chromium] ΓÇ║ tests\e2e\editor.spec.ts:102:1 ΓÇ║ the caret is clamped when a peer deletes the text before it (6.9s)
+  ok 20 [chromium] ΓÇ║ tests\e2e\expert-system.spec.ts:104:1 ΓÇ║ runs a questionnaire and prints a conclusion (4.1s)
+  ok 19 [chromium] ΓÇ║ tests\e2e\editor.spec.ts:142:1 ΓÇ║ a peer's cursor is drawn and scrolls with the text (8.2s)
+  ok 22 [chromium] ΓÇ║ tests\e2e\expert-system.spec.ts:173:1 ΓÇ║ a questionnaire with no answers falls through to the default answer (3.2s)
+  ok 21 [chromium] ΓÇ║ tests\e2e\expert-system.spec.ts:152:1 ΓÇ║ answers are consumed in order, so different answers give a different rule (4.4s)
+  ok 25 [chromium] ΓÇ║ tests\e2e\smoke.spec.ts:12:1 ΓÇ║ boots the engine and answers a goal (2.8s)
+  ok 23 [chromium] ΓÇ║ tests\e2e\expert-system.spec.ts:192:1 ΓÇ║ an undeclared predicate is reported as an error, not as a wrong answer (3.9s)
+  ok 24 [chromium] ΓÇ║ tests\e2e\expert-system.spec.ts:215:1 ΓÇ║ a fallback written as its own predicate is never reached (4.1s)
+  ok 26 [chromium] ΓÇ║ tests\e2e\smoke.spec.ts:25:1 ΓÇ║ shows the SWI-Prolog version it is running (2.0s)
+  ok 27 [chromium] ΓÇ║ tests\e2e\smoke.spec.ts:33:1 ΓÇ║ enumerates solutions one step at a time (2.3s)
+  ok 29 [chromium] ΓÇ║ tests\e2e\smoke.spec.ts:56:1 ΓÇ║ shows the output of write/1 (2.3s)
+  ok 28 [chromium] ΓÇ║ tests\e2e\smoke.spec.ts:48:1 ΓÇ║ reports no solutions for a goal that fails (3.1s)
+  ok 30 [chromium] ΓÇ║ tests\e2e\smoke.spec.ts:65:1 ΓÇ║ reports an unknown procedure as an error, not as no solutions (2.4s)
+  ok 31 [chromium] ΓÇ║ tests\e2e\smoke.spec.ts:74:1 ΓÇ║ reports a syntax error with its line and keeps the old program (2.5s)
+
+  31 passed (1.1m)

@@ -58,7 +58,7 @@ test('shows the output of write/1', async ({ context }) => {
   await waitForEngine(page);
 
   await runGoal(page, 'write(hello), nl.');
-  await expect(page.locator('.console__output')).toContainText('hello');
+  await expect(page.locator('.terminal__text')).toContainText('hello');
   expect(await readOutput(page)).toContain('hello');
 });
 

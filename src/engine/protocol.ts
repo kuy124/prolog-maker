@@ -35,6 +35,7 @@ export type WireBindings = Record<string, WireTerm>;
 export type EngineRequest =
   | { id: number; kind: 'boot' }
   | { id: number; kind: 'consult'; program: string; facts: string }
+  | { id: number; kind: 'input'; lines: string[] }
   | { id: number; kind: 'open'; goal: string }
   | { id: number; kind: 'next'; query: number }
   | { id: number; kind: 'close'; query: number };
@@ -43,6 +44,7 @@ export type EngineResponse =
   | { id: number; kind: 'booted'; version: string; bootMs: number }
   | { id: number; kind: 'consulted' }
   | { id: number; kind: 'consultError'; message: string; line: number | null }
+  | { id: number; kind: 'inputSet' }
   | { id: number; kind: 'opened'; query: number; variables: string[] }
   | { id: number; kind: 'openError'; message: string }
   | { id: number; kind: 'solution'; query: number; bindings: WireBindings; more: boolean }

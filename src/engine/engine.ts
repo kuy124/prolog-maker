@@ -63,6 +63,7 @@ export interface SwiplInstance {
   };
   FS: {
     writeFile: (path: string, data: string) => void;
+    readFile: (path: string, options: { encoding: 'utf8' }) => string;
   };
 }
 
@@ -137,6 +138,47 @@ export class PrologError extends Error {
 
 const PROGRAM_FILE = '/tmp/room/program.pl';
 const FACTS_FILE = '/tmp/room/facts.pl';
+
+/**
+ * Where the transcript accumulates.
+ *
+ * Output is redirected here instead of being read from the bridge's `print`
+ * callback, because Emscripten throws the newline away. `default_tty_ops.put_char`
+ * flushes the buffer when it sees character 10 and then discards the character
+ * itself — correct for a real terminal, which supplies the line break itself, but
+ * in a browser it means every `nl/0` silently vanishes and a program's output runs
+ * together into one paragraph.
+ *
+ * A file is used rather than a SWI memory stream because this build's `open/4`
+ * rejects `type(memory)`. The stream is held in a Prolog global because a stream
+ * handle is collected once nothing references it, and it is never closed while
+ * being read because closing a MEMFS file unlinks it.
+ *
+ * The stream is opened `buffer(line)` so that it flushes itself at every newline.
+ * That matters more than it looks: the bridge permits only one open query, so
+ * flushing by running `flush_output/1` between two `next()` calls would close the
+ * very query being stepped and silently end its enumeration. A line-buffered
+ * stream needs no query at all to be read.
+ */
+const TRANSCRIPT_FILE = '/tmp/room/transcript.txt';
+
+/**
+ * Encodes one line of console input as a Prolog term.
+ *
+ * `read/1` parses a *term*, so an answer has to be terminated by a full stop:
+ * `y` alone is an unterminated term and the read fails with a syntax error. A
+ * line that already ends in a stop is passed through, so a full compound like
+ * `person(ada)` is accepted as an answer.
+ *
+ * Blank lines are dropped rather than encoded: there is no term for an empty
+ * line, and a stray Enter should not become a syntax error in the middle of a
+ * questionnaire.
+ */
+export function encodeAnswer(line: string): string | null {
+  const trimmed = line.trim();
+  if (trimmed.length === 0) return null;
+  return trimmed.endsWith('.') ? trimmed : `${trimmed}.`;
+}
 
 /**
  * Pulls `FILE:LINE:COL: Syntax error: Reason` out of the engine's stderr.
@@ -247,19 +289,117 @@ export class PrologEngine {
   #program = '';
   #facts = '';
   #scratch = 0;
-  /** Text the engine printed while the current capture was running. */
+  /** Text the engine printed to the terminal while the current capture was running. */
   #captured: string[] | null = null;
   /** The one query allowed to be open, if any. */
   #live: OpenQuery | null = null;
+  /** How much of the transcript file has already been handed to the host. */
+  #transcriptOffset = 0;
+  /** Whether output has been redirected into the transcript file yet. */
+  #transcriptOpen = false;
 
   constructor(instance: SwiplInstance, sink: OutputSink) {
     this.#instance = instance;
-    // Everything printed outside a capture goes wherever the host put it — the
-    // results pane in the browser, the console in a test.
+    // Text that bypasses the transcript — a load error on stderr, or anything
+    // written before the redirect is installed. It goes wherever the host put it:
+    // the results pane in the browser, the console in a test.
     sink.current = (text) => {
       if (this.#captured) this.#captured.push(text);
       else this.#idle(text);
     };
+    this.#beginTranscript();
+  }
+
+  /**
+   * Redirects `user_output` into the transcript file.
+   *
+   * The stream is stored in a Prolog global so it outlives this call. A handle
+   * that nothing references is collected, and collecting it closes the stream —
+   * which in MEMFS unlinks the file, losing the transcript.
+   */
+  #beginTranscript(): void {
+    if (this.#transcriptOpen) return;
+    this.#ask(
+      // The directory first: the transcript opens before anything else has run,
+      // and a failed open would leave the global unset, which makes every later
+      // flush fail and every transcript read back as empty.
+      `catch(make_directory('/tmp/room'), _, true), ` +
+        `catch(open('${TRANSCRIPT_FILE}', write, T, [buffer(line)]), _, fail), ` +
+        `nb_setval(prolog_transcript, T), set_output(T).`,
+    );
+    this.#transcriptOpen = true;
+    this.#transcriptOffset = 0;
+  }
+
+  /**
+   * The output produced since the last call, with newlines intact.
+   *
+   * Purely a file read — no Prolog goal runs. That is deliberate: the bridge holds
+   * a single engine slot, so a flush between two `next()` calls would close the
+   * open query and end its enumeration after the first solution. The stream is
+   * line-buffered, so anything a reader could want to see has already been written.
+   *
+   * Read from JavaScript rather than through a second Prolog handle: closing a
+   * MEMFS stream unlinks its file, so a reader opened inside the engine would
+   * destroy the very text it was about to read.
+   */
+  takeOutput(): string {
+    if (!this.#transcriptOpen) return '';
+    let text: string;
+    try {
+      text = this.#instance.FS.readFile(TRANSCRIPT_FILE, { encoding: 'utf8' });
+    } catch {
+      return '';
+    }
+    if (text.length <= this.#transcriptOffset) return '';
+    const fresh = text.slice(this.#transcriptOffset);
+    this.#transcriptOffset = text.length;
+    return fresh;
+  }
+
+  /**
+   * Installs the answers `read/1` will consume.
+   *
+   * `read/1` cannot be fed from JavaScript. Emscripten's stdin hook only reads
+   * `process.stdin` under Node or `window.prompt` in a window, and a Web Worker
+   * has neither, so `user_input` sits at end-of-file and every `read/1` returns
+   * `end_of_file` immediately. Passing a Prolog string stream is the supported
+   * way in, and `set_input/1` is what points `read/1` at it.
+   *
+   * Answers are consumed in order. Once they run out `read/1` returns
+   * `end_of_file`, which is exactly how a top-level loop ends when the input ends,
+   * so a program written for the terminal keeps working and stops asking.
+   */
+  setInput(lines: string[]): void {
+    const terms = lines.map(encodeAnswer).filter((term): term is string => term !== null);
+    // An empty stream is not the same as no input. Reading from one does not yield
+    // `end_of_file`, it fails — and a questionnaire whose `read/1` fails on the
+    // first question backtracks into its own question list and prints the rest of
+    // them before dying, instead of falling through to its default answer. One
+    // explicit `end_of_file` term gives the behaviour a top level has.
+    const text = terms.length > 0 ? terms.join('\n') : 'end_of_file.';
+    this.#ask(
+      `open_string(${JSON.stringify(text)}, S), ` +
+        `nb_setval(prolog_input, S), set_input(S).`,
+    );
+  }
+
+  /**
+   * Discards the transcript so the next run starts from a clean page.
+   *
+   * The new stream is opened `buffer(line)` for the reason given at
+   * `TRANSCRIPT_FILE`: reading it back must never need a Prolog goal, or the read
+   * would close whatever query is open.
+   */
+  resetOutput(): void {
+    this.takeOutput();
+    if (!this.#transcriptOpen) return;
+    this.#ask(
+      `nb_getval(prolog_transcript, T), catch(close(T), _, true), ` +
+        `open('${TRANSCRIPT_FILE}', write, T2, [buffer(line)]), ` +
+        `nb_setval(prolog_transcript, T2), set_output(T2).`,
+    );
+    this.#transcriptOffset = 0;
   }
 
   /** Replaces the destination for output produced outside a capture. */
@@ -370,10 +510,17 @@ export class PrologEngine {
   }
 
   /**
-   * Collects whatever the engine writes to stdout/stderr while `run` executes.
+   * Collects whatever the engine writes while `run` executes.
+   *
+   * Two sources, because output takes two routes. Standard output has been
+   * redirected into the transcript file, so it is read back as a delta; errors
+   * are printed to stderr and still arrive through the bridge's `printErr`, which
+   * the sink collects. Both are needed: a load failure can be reported either way,
+   * and only the stderr form carries the `FILE:LINE:COL: Syntax error` shape that
+   * `parseSyntaxError` reads.
    *
    * The bridge has no per-call output stream — `print`/`printErr` are fixed when
-   * the module is created — so the indirection installed at boot redirects text
+   * the module is created — so the indirection installed at boot redirects stderr
    * into a buffer for the duration of the call. This is only safe because the
    * engine is single threaded and `run` is synchronous.
    */
@@ -386,7 +533,7 @@ export class PrologEngine {
     } finally {
       this.#captured = previous;
     }
-    return chunks.join('');
+    return chunks.join('') + this.takeOutput();
   }
 
   /**

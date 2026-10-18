@@ -48,6 +48,23 @@ function reply(message: EngineResponse): void {
 }
 
 /**
+ * Forwards whatever the goal has written since the last call.
+ *
+ * Output is read from a transcript file rather than from the bridge's `print`
+ * callback, because Emscripten discards the newline character when it flushes a
+ * line. See `TRANSCRIPT_FILE` in engine.ts for the detail.
+ *
+ * Reads the booted engine directly rather than awaiting `ready()`: this runs after
+ * a step has already completed, so the engine necessarily exists, and awaiting
+ * would add a microtask between the step and its output.
+ */
+function emit(): void {
+  if (!engine) return;
+  const text = engine.takeOutput();
+  if (text.length > 0) reply({ id: currentRequest, kind: 'output', text });
+}
+
+/**
  * Boots the engine and loads the program.
  *
  * `importScripts` rather than `import`: `swipl-web.js` is Emscripten output, a
@@ -110,9 +127,24 @@ scope.onmessage = (event: MessageEvent<EngineRequest>) => {
           }
           break;
         }
+        case 'input': {
+          const prolog = await ready();
+          try {
+            prolog.setInput(request.lines);
+            reply({ id: request.id, kind: 'inputSet' });
+          } catch (error) {
+            reply({
+              id: request.id,
+              kind: 'failed',
+              message: String((error as Error)?.message ?? 'The answers could not be installed.'),
+            });
+          }
+          break;
+        }
         case 'open': {
           const prolog = await ready();
           try {
+            prolog.resetOutput();
             const { variables, handle } = prolog.open(request.goal);
             const queryId = nextQueryId++;
             open.set(queryId, handle);
@@ -134,6 +166,9 @@ scope.onmessage = (event: MessageEvent<EngineRequest>) => {
           }
           try {
             const solution = handle.next();
+            // Output is drained before every reply, so a goal that writes before
+            // it fails still leaves its transcript behind.
+            emit();
             if (!solution) {
               open.delete(request.query);
               reply({ id: request.id, kind: 'done', query: request.query });
@@ -151,6 +186,7 @@ scope.onmessage = (event: MessageEvent<EngineRequest>) => {
               reply({ id: request.id, kind: 'done', query: request.query });
             }
           } catch (error) {
+            emit();
             open.delete(request.query);
             reply({
               id: request.id,
