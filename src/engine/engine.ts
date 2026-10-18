@@ -41,6 +41,8 @@
 
 import type { WireBindings, WireTerm } from './protocol';
 import { REPL_SHIM } from './repl-shim';
+import { factsWithDynamic } from './facts';
+
 
 /**
  * The slice of the Emscripten module this app uses.
@@ -513,13 +515,23 @@ export class PrologEngine {
     // before any goal runs, and a separately-loaded file could be dropped by the
     // build or left stale by a redeploy.
     this.#instance.FS.writeFile(PROGRAM_FILE, `${REPL_SHIM}\n${program}`);
-    this.#instance.FS.writeFile(FACTS_FILE, facts);
+    this.#instance.FS.writeFile(FACTS_FILE, factsWithDynamic(facts));
 
+    // Facts first, then the program. The order is load-bearing.
+    //
+    // `consult/1` treats a file as the whole definition of what it declares, so a
+    // predicate the facts define is re-established with the facts file's properties
+    // when the facts are consulted. Loading the program afterwards lets its own
+    // `:- dynamic(Name/Arity).` directives have the last word, which is what a person
+    // reading the program would expect. The reverse order silently undid them: a
+    // program that declared `observation/1` dynamic was left with a static
+    // `observation/1` and `assert/1` refused, naming a file they had never written.
+    //
     // Qualified as `user:` so the load lands in the module the console queries.
     // See the note at the top of the file.
     const loaded = this.#captureOutput(() => {
       this.#ask(
-        `catch((user:consult('${PROGRAM_FILE}'), user:consult('${FACTS_FILE}')), E, ` +
+        `catch((user:consult('${FACTS_FILE}'), user:consult('${PROGRAM_FILE}')), E, ` +
           `(write_canonical(E), nl, fail)).`,
       );
     });
@@ -679,3 +691,7 @@ export class OpenQuery {
     return this.#closed;
   }
 }
+
+
+
+

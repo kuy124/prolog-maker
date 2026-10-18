@@ -242,7 +242,10 @@ test('a goal that never reads behaves exactly as before', async ({ context }) =>
   await page.locator('.console__input').fill('likes(ada, X).');
   await page.locator('.console__input').press('Enter');
 
-  await expect(page.locator('.results')).toBeVisible({ timeout: 30_000 });
+  // Generous, because this suite runs three WebAssembly engines in parallel and the
+  // goal waits behind whichever one is still booting. It passed in 1.1s alone and
+  // timed out at 30s in the full run.
+  await expect(page.locator('.results')).toBeVisible({ timeout: 60_000 });
   expect((await readRows(page)).join(' ')).toContain('prolog');
   // No prompt, because nothing asked anything.
   await expect(page.locator('.note--waiting')).toHaveCount(0);
