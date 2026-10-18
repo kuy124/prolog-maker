@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-spike/
+
+# Vendored engine: 4 MB of binary fetched by `npm run vendor`, not committed.
+# It is reproducible from package-lock.json, and committing it would make every
+# engine bump show up as a large binary diff.
+public/engine/
+
+# Test output
+test-results/
+playwright-report/
+blob-report/
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+*.local
+.vscode/
+.idea/
+
+# Logs
+npm-debug.log*
+yarn-error.log*
+*.tsbuildinfo

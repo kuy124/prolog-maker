@@ -1,0 +1,66 @@
+# Deploys the built app to GitHub Pages.
+#
+# Only the build is needed here: the app is entirely static. SWI-Prolog is
+# compiled to WebAssembly and runs in the visitor's browser, and collaboration is
+# peer to peer, so there is no server to deploy and nothing to pay for.
+#
+# The engine is vendored into `public/engine/` by `npm run vendor`, which runs
+# automatically before the build. Pages serves those files from the same origin,
+# so `swipl-web.wasm` arrives with the correct content type and no third-party
+# request is made on startup.
+#
+# Deploying from a workflow rather than a branch keeps the build reproducible and
+# inspectable, and Pages serves the repository subpath directly, which is why
+# `base` is set to './' in vite.config.ts.
+
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a newer push supersedes an in-flight one rather than
+# racing it.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Unit tests and a typecheck run before the build so a broken commit never
+      # reaches Pages. The browser tests are left out: they need Playwright's
+      # browser download, and the engine they exercise is the same artifact this
+      # workflow deploys.
+      - run: npm test
+      - run: npm run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
