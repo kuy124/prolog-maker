@@ -6,6 +6,7 @@
  *   doc.getText('program')      the Prolog source, one string
  *   doc.getMap('facts')         id -> { term, author, at }   asserted facts
  *   doc.getArray('log')         { id, who, goal, count, at }  the query log
+ *   doc.getMap('seeds')         clientId -> program          every seed attempt
  *   doc.getMap('meta')          { name }
  *
  * The program is a `Y.Text` rather than a map of clauses because it is edited as
@@ -23,6 +24,10 @@
  * The log is append-only and shared so a group can see each other's queries and
  * re-run one. It is capped: a room left open for a day should not accumulate
  * thousands of rows in everyone's IndexedDB.
+ *
+ * The seed is the one thing here that two peers can do at the same time without
+ * meaning to, and it is additive: a `Y.Text` insert is never deduplicated by a
+ * merge. See `seedProgram` and `reconcileProgram`.
  */
 
 import * as Y from 'yjs';
@@ -31,6 +36,8 @@ export const PROGRAM = 'program';
 export const FACTS = 'facts';
 export const LOG = 'log';
 export const META = 'meta';
+/** Key holding every seed attempt, keyed by the client that made it. */
+export const SEEDS = 'seeds';
 
 /** How many log entries to keep. Old entries fall off the front. */
 export const LOG_LIMIT = 200;
@@ -54,23 +61,99 @@ export interface LogEntry {
   at: number;
 }
 
+/**
+ * One peer's attempt to give an empty room its first program, keyed by the client
+ * id that made it. The source text is kept exactly as it was inserted, because
+ * that is the only thing that identifies the copy a merge may have to remove.
+ */
+export type Seed = string;
+
 export function emptyDocument(doc: Y.Doc): void {
   doc.transact(() => {
     doc.getText(PROGRAM).delete(0, doc.getText(PROGRAM).length);
     const facts = doc.getMap<Fact>(FACTS);
     for (const key of [...facts.keys()]) facts.delete(key);
     doc.getArray<LogEntry>(LOG).delete(0, doc.getArray<LogEntry>(LOG).length);
+    const seeds = doc.getMap<Seed>(SEEDS);
+    for (const key of [...seeds.keys()]) seeds.delete(key);
     doc.getMap(META).set('name', 'Untitled room');
   });
 }
 
-/** The program text, seeded only if nobody has written anything yet. */
+/**
+ * The program text, seeded only if nobody has written anything yet.
+ *
+ * Seeding is the one write here that two peers can make at the same moment
+ * without meaning to. Somebody opens a room, somebody else opens the same link
+ * before the first peer's text has reached them, and both find an empty document.
+ * A `Y.Text` insert is additive — Yjs keeps both, side by side — so without care
+ * the room shows the program twice. That is the duplicate this exists to prevent.
+ *
+ * A guard alone cannot prevent it: before the two peers meet there is nothing to
+ * guard against. So the attempt is *recorded* as well as applied. `seeds` is a
+ * `Y.Map` written once per client, so two attempts merge into two entries rather
+ * than into one item of duplicated text, and every peer can afterwards see that
+ * the room was seeded more than once. `reconcileProgram` uses that record to
+ * collapse the copies.
+ */
 export function seedProgram(doc: Y.Doc, source: string): void {
   const text = doc.getText(PROGRAM);
-  if (text.length > 0) return;
+  // An empty source is nothing at all: recording it would block the real seed.
+  if (text.length > 0 || source.length === 0) return;
+  const seeds = doc.getMap<Seed>(SEEDS);
+  if (seeds.size > 0) return;
   doc.transact(() => {
+    seeds.set(String(doc.clientID), source);
     text.insert(0, source);
   });
+}
+
+/** Every seed attempt in the document, ordered by client id so all peers agree. */
+function readSeeds(doc: Y.Doc): { by: number; source: string }[] {
+  const out: { by: number; source: string }[] = [];
+  doc.getMap<Seed>(SEEDS).forEach((source, key) => {
+    if (typeof source !== 'string' || source.length === 0) return;
+    out.push({ by: Number(key), source });
+  });
+  return out.sort((a, b) => a.by - b.by);
+}
+
+/**
+ * Removes the copies left behind when two peers seeded the same room at once.
+ *
+ * Yjs never drops a concurrent insert, so a room seeded by two peers before they
+ * met holds the program twice and stays that way forever. The winner is the
+ * lowest client id, which every peer computes identically, and every peer deletes
+ * the same range, so the repaired text converges.
+ *
+ * Only the seed itself is removed, and only where a second copy is provably
+ * sitting next to the first. A program that merely begins to look like the seed
+ * is left alone: this repairs a merge artefact, and it is not allowed to eat
+ * somebody's typing.
+ */
+export function reconcileProgram(doc: Y.Doc): void {
+  const text = doc.getText(PROGRAM);
+  const seeds = doc.getMap<Seed>(SEEDS);
+  // One copy and one record go per pass, so three peers seeded at once take two
+  // passes and the loop still cannot run away. Clearing the records matters as
+  // much as deleting the copies: a record left behind would let this repair a
+  // program the user has since typed on purpose.
+  for (;;) {
+    const attempts = readSeeds(doc);
+    if (attempts.length < 2) return;
+    const winner = attempts[0]!;
+    const loser = attempts[attempts.length - 1]!;
+    const program = text.toString();
+    // Which of the two copies sits first depends on the order Yjs gave the
+    // concurrent inserts, so both orders have to be tried.
+    const after = program.indexOf(winner.source + loser.source);
+    const before = after === -1 ? program.indexOf(loser.source + winner.source) : -1;
+    if (after === -1 && before === -1) return;
+    doc.transact(() => {
+      text.delete(after === -1 ? before : after + winner.source.length, loser.source.length);
+      seeds.delete(String(loser.by));
+    });
+  }
 }
 
 export function readFacts(doc: Y.Doc): Fact[] {

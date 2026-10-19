@@ -72,6 +72,48 @@ test('an edit in one browser appears in the other', async ({ browser }) => {
   await contextB.close();
 });
 
+test('joining a room does not duplicate the program', async ({ browser }) => {
+  /*
+   * The reported bug, in the shape a user hits it.
+   *
+   * B opens the link while A still has it open, so B's IndexedDB is empty and B
+   * seeds the room with the starter program too. Yjs keeps both concurrent
+   * inserts — the text is additive and is never deduplicated by a merge — so
+   * without a repair the program appears twice on both screens and stays there.
+   */
+  const contextA = await browser.newContext();
+  const contextB = await browser.newContext();
+
+  const pageA = await openApp(contextA);
+  await waitForEngine(pageA);
+  const room = await roomCode(pageA);
+
+  const pageB = await joinRoom(contextB, room);
+  await waitForEngine(pageB);
+  await waitForPeers(pageA, 1);
+  await waitForPeers(pageB, 1);
+
+  // Give the merge time to land and, if it is going to, leave the duplicate.
+  await pageA.waitForTimeout(2000);
+
+  const starters = (program: string) => (program.match(/likes\(ada, prolog\)\./g) ?? []).length;
+  expect(starters(await getProgram(pageA))).toBe(1);
+  expect(starters(await getProgram(pageB))).toBe(1);
+
+  // And the two must still agree on one program.
+  await expect
+    .poll(async () => (await getProgram(pageA)) === (await getProgram(pageB)), { timeout: 20_000 })
+    .toBe(true);
+
+  // The repaired room still runs, on both sides.
+  await runGoal(pageA, 'both(ada, Who).');
+  await expect(pageA.locator('.results')).toBeVisible();
+  expect((await readRows(pageA)).join(' ')).toContain('bo');
+
+  await contextA.close();
+  await contextB.close();
+});
+
 test('concurrent typing in different places merges without losing either edit', async ({ browser }) => {
   const contextA = await browser.newContext();
   const contextB = await browser.newContext();

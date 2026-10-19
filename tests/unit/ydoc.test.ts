@@ -9,6 +9,7 @@ import {
   factsSource,
   readFacts,
   readLog,
+  reconcileProgram,
   removeFact,
   seedProgram,
   type Fact,
@@ -41,6 +42,95 @@ describe('program', () => {
     seedProgram(d, 'later.');
     // An empty seed leaves nothing behind, so the next seed is free to apply.
     expect(d.getText(PROGRAM).toString()).toBe('later.');
+  });
+
+  it('collapses the duplicate two peers make by seeding the same room', () => {
+    // The reported bug. Both peers open the link before either has seen the
+    // other, both find an empty document, and both seed. Yjs keeps both
+    // concurrent inserts, so the program arrives written twice.
+    const a = doc();
+    const b = doc();
+    seedProgram(a, 'likes(ada, tea).\n');
+    seedProgram(b, 'likes(ada, tea).\n');
+    Y.applyUpdate(a, Y.encodeStateAsUpdate(b));
+    Y.applyUpdate(b, Y.encodeStateAsUpdate(a));
+
+    reconcileProgram(a);
+    reconcileProgram(b);
+    Y.applyUpdate(a, Y.encodeStateAsUpdate(b));
+    Y.applyUpdate(b, Y.encodeStateAsUpdate(a));
+
+    expect(a.getText(PROGRAM).toString()).toBe('likes(ada, tea).\n');
+    expect(b.getText(PROGRAM).toString()).toBe('likes(ada, tea).\n');
+  });
+
+  it('collapses the duplicate whichever order Yjs put the two inserts in', () => {
+    // Same as above with the client ids swapped, so the losing copy lands first.
+    const a = doc();
+    const b = doc();
+    seedProgram(a, 'likes(ada, tea).\n');
+    seedProgram(b, 'likes(ada, tea).\n');
+    if (a.clientID < b.clientID) Y.applyUpdate(b, Y.encodeStateAsUpdate(a));
+    else Y.applyUpdate(a, Y.encodeStateAsUpdate(b));
+
+    reconcileProgram(a);
+    reconcileProgram(b);
+    Y.applyUpdate(a, Y.encodeStateAsUpdate(b));
+    Y.applyUpdate(b, Y.encodeStateAsUpdate(a));
+
+    expect(a.getText(PROGRAM).toString()).toBe('likes(ada, tea).\n');
+    expect(b.getText(PROGRAM).toString()).toBe('likes(ada, tea).\n');
+  });
+
+  it('keeps one program when two peers seeded a room with different ones', () => {
+    const a = doc();
+    const b = doc();
+    seedProgram(a, 'first.\n');
+    seedProgram(b, 'second.\n');
+    Y.applyUpdate(a, Y.encodeStateAsUpdate(b));
+    Y.applyUpdate(b, Y.encodeStateAsUpdate(a));
+
+    reconcileProgram(a);
+    reconcileProgram(b);
+    Y.applyUpdate(a, Y.encodeStateAsUpdate(b));
+    Y.applyUpdate(b, Y.encodeStateAsUpdate(a));
+
+    // One of them survives, and both peers agree on which.
+    const kept = a.getText(PROGRAM).toString();
+    expect([ 'first.\n', 'second.\n' ]).toContain(kept);
+    expect(b.getText(PROGRAM).toString()).toBe(kept);
+  });
+
+  it('leaves a program alone once the duplicate has been collapsed', () => {
+    // The repair must not keep eating a program that legitimately repeats.
+    const d = doc();
+    seedProgram(d, 'likes(ada, tea).\n');
+    d.getText(PROGRAM).insert(0, 'likes(ada, tea).\n');
+    reconcileProgram(d);
+    expect(d.getText(PROGRAM).toString()).toBe('likes(ada, tea).\nlikes(ada, tea).\n');
+  });
+
+  it('collapses a duplicate that a late third peer produced', () => {
+    const a = doc();
+    const b = doc();
+    const c = doc();
+    for (const d of [a, b, c]) seedProgram(d, 'likes(ada, tea).\n');
+    for (const d of [a, b, c]) {
+      Y.applyUpdate(d, Y.encodeStateAsUpdate(a));
+      Y.applyUpdate(d, Y.encodeStateAsUpdate(b));
+      Y.applyUpdate(d, Y.encodeStateAsUpdate(c));
+    }
+
+    for (const d of [a, b, c]) {
+      reconcileProgram(d);
+      Y.applyUpdate(d, Y.encodeStateAsUpdate(a));
+      Y.applyUpdate(d, Y.encodeStateAsUpdate(b));
+      Y.applyUpdate(d, Y.encodeStateAsUpdate(c));
+    }
+
+    expect(a.getText(PROGRAM).toString()).toBe('likes(ada, tea).\n');
+    expect(b.getText(PROGRAM).toString()).toBe('likes(ada, tea).\n');
+    expect(c.getText(PROGRAM).toString()).toBe('likes(ada, tea).\n');
   });
 
   it('merges concurrent typing in different places without losing either edit', () => {

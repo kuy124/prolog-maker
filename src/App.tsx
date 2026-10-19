@@ -30,6 +30,7 @@ import {
   factsSource,
   readFacts,
   readLog,
+  reconcileProgram,
   removeFact,
   seedProgram,
   type Fact,
@@ -240,6 +241,15 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
       }
     });
 
+    /*
+     * Two peers can seed the same room before they have seen each other, which
+     * Yjs merges into the program written twice rather than once. The repair is
+     * registered first so it deletes the extra copy before the render below
+     * reads the text, and so no peer ever sees the doubled program.
+     */
+    const reconcile = () => reconcileProgram(handle.ydoc);
+    handle.ydoc.on('update', reconcile);
+
     const sync = () => {
       setFacts(readFacts(handle.ydoc));
       setLog(readLog(handle.ydoc));
@@ -258,6 +268,7 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
     return () => {
       window.clearInterval(poll);
       handle.awareness.off('change', awarenessChange);
+      handle.ydoc.off('update', reconcile);
       handle.ydoc.off('update', sync);
       handle.destroy();
       setRoom(null);
