@@ -14,6 +14,7 @@ public/engine/
 test-results/
 playwright-report/
 blob-report/
+.playwright-mcp/
 
 # Editor and OS noise
 .DS_Store

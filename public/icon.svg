@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Prolog Room">
+  <rect width="64" height="64" rx="14" fill="#0f7b8a"/>
+  <g fill="none" stroke="#fbfcfb" stroke-width="9" stroke-linecap="round">
+    <path d="M14 32h9"/>
+    <path d="M30 23a9 9 0 0 1 18 0c0 6.5-9 7.5-9 13"/>
+  </g>
+  <circle cx="39" cy="45" r="4.8" fill="#fbfcfb"/>
+</svg>

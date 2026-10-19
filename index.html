@@ -9,6 +9,24 @@
       name="description"
       content="Write and run SWI-Prolog with other people in the same room. Peer to peer, no account, no server."
     />
+
+    <!--
+      The mark is the Prolog prompt on a filled signal tile: the one glyph that
+      says what this is, at the one size a tab icon is actually drawn at. See
+      `scripts/make-icon.mjs`, which renders every raster here from the same
+      geometry.
+
+      The SVG comes first so a browser that can scale it gets a crisp icon at any
+      density; the PNGs are the fallback and the home-screen tile. `theme-color`
+      is the signal colour, so a mobile browser's chrome joins the tile instead of
+      framing it in grey.
+    -->
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/icon-32.png" sizes="32x32" type="image/png" />
+    <link rel="icon" href="/icon-16.png" sizes="16x16" type="image/png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="theme-color" content="#0f7b8a" />
   </head>
   <body>
     <div id="root"></div>
