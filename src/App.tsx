@@ -33,6 +33,7 @@ import {
   reconcileProgram,
   removeFact,
   seedProgram,
+  updateLog,
   type Fact,
   type LogEntry,
 } from './collab/ydoc';
@@ -201,6 +202,13 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
   const programRef = useRef('');
   const factsRef = useRef<Fact[]>([]);
   /**
+   * The room, in a ref as well as state.
+   *
+   * The engine callbacks are created once, when the engine starts, and the engine
+   * outlives room changes on purpose — so they cannot close over the room state.
+   */
+  const roomRef = useRef<RoomHandle | null>(null);
+  /**
    * The session, in a ref as well as state.
    *
    * The engine callbacks are created once, when the engine starts, so they cannot
@@ -208,12 +216,34 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
    * without being rebuilt on every answer.
    */
   const sessionRef = useRef<ReplSession | null>(null);
+  /** The log entry for the goal currently open, so its outcome can be recorded. */
+  const logEntryRef = useRef<string | null>(null);
+  /** Solutions seen so far for the open goal, counted as they arrive. */
+  const solutionCount = useRef(0);
+  /**
+   * Writes how the open goal turned out back into the shared log.
+   *
+   * Called from the engine callbacks, which run once and cannot see state, so it
+   * reads the refs. A goal that is abandoned (Stop, or a new goal) never reports
+   * an outcome, and the entry keeps its null count — which is honest: nobody
+   * knows how many solutions it had.
+   */
+  const recordOutcome = useCallback((patch: { count?: number; error?: string }, final = true) => {
+    const id = logEntryRef.current;
+    const handle = roomRef.current;
+    if (!id || !handle) return;
+    // Only a finished goal releases the entry. A goal stepped one solution at a
+    // time keeps it, so the count can be raised again as more arrive.
+    if (final) logEntryRef.current = null;
+    updateLog(handle.ydoc, id, patch);
+  }, []);
 
   // ---------------------------------------------------------------- the room
 
   useEffect(() => {
     const handle = createRoom(session.room);
     setRoom(handle);
+    roomRef.current = handle;
     // Remember the room before anything can go wrong, so a reload always returns
     // here rather than to a new empty room.
     rememberRoom(session.room);
@@ -271,6 +301,7 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
       handle.ydoc.off('update', reconcile);
       handle.ydoc.off('update', sync);
       handle.destroy();
+      roomRef.current = null;
       setRoom(null);
     };
   }, [session]);
@@ -299,14 +330,17 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
         setRows([]);
         setExhausted(false);
         setQueryError(null);
+        solutionCount.current = 0;
         client.next(query);
       },
       onOpenError: (message) => {
         setBusy(false);
         setQueryError(message);
+        recordOutcome({ error: message });
       },
       onSolution: (query, solution) => {
         if (query !== currentQueryRef.current) return;
+        solutionCount.current += 1;
         setRows((previous) => [...previous, solution.bindings]);
         // The worker is idle between solutions: it has stopped computing and is
         // waiting to be asked for the next one. So `busy` clears here even when
@@ -314,15 +348,24 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
         // console only offers it while the engine is not busy.
         setBusy(false);
         if (!solution.more) setExhausted(true);
+        // Recorded as each solution arrives rather than at the end, because a
+        // goal with more alternatives is never "done" until somebody stops
+        // asking — and the log would otherwise say "ran" forever for exactly the
+        // queries whose count is most interesting.
+        recordOutcome({ count: solutionCount.current }, !solution.more);
       },
       onDone: () => {
         setBusy(false);
         setExhausted(true);
+        // The goal is finished. The count was already recorded as each solution
+        // arrived, so this only releases the entry.
+        recordOutcome({ count: solutionCount.current });
       },
       onQueryError: (_query, message) => {
         setBusy(false);
         setExhausted(true);
         setQueryError(message);
+        recordOutcome({ error: message });
       },
       onNeedsInput: () => {
         // The programme asked a question. It is not busy — it is waiting — so the
@@ -349,8 +392,9 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
       engineRef.current = null;
     };
     // The engine outlives room changes on purpose: it belongs to the browser,
-    // not to the room.
-  }, []);
+    // not to the room. `recordOutcome` is stable (it only reads refs), so it is
+    // safe to depend on without rebuilding the engine.
+  }, [recordOutcome]);
 
   // The handlers above need the current query without re-creating the client.
   const currentQueryRef = useRef<number | null>(null);
@@ -437,8 +481,13 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
 
       if (identity) room?.awareness.setLocalStateField('goal', goalText);
       room?.awareness.setLocalStateField('running', true);
+      const entryId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      // Held so the outcome can be written back when the engine reports one. The
+      // log is appended now, because "somebody is running this" is worth sharing
+      // immediately; the count is not known until the goal answers or fails.
+      logEntryRef.current = entryId;
       appendLog(room!.ydoc, {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        id: entryId,
         who: identity?.name ?? 'someone',
         goal: goalText,
         count: null,
@@ -490,6 +539,10 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
     }
     engineRef.current?.stop();
     setBusy(false);
+    // The goal was abandoned, so the log keeps whatever count it had reached and
+    // stops listening. Leaving the entry open would let the next goal's solutions
+    // be written into this one's row.
+    logEntryRef.current = null;
     room?.awareness.setLocalStateField('running', false);
   }, [room]);
 
@@ -731,6 +784,7 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
             onGoalChange={setGoal}
             onAnswer={sendAnswer}
             waiting={repl?.waiting ?? false}
+            log={log}
           />
           <FactsPanel
             facts={facts}

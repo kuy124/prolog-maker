@@ -259,6 +259,10 @@ const TOPICS = [
           Because a goal cannot be interrupted once it starts, <strong>Stop</strong> replaces the
           engine and reloads the program. Results already on screen are kept.
         </p>
+        <p>
+          The <strong>query log</strong> under the console records what everyone in the room has
+          asked, with the number of solutions each goal had. Click an entry to run it again.
+        </p>
       </>
     ),
   },

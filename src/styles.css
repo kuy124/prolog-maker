@@ -195,6 +195,11 @@ kbd {
 
 .app {
   display: grid;
+  /* `minmax(0, 1fr)` rather than the implicit `auto` column: an implicit column is
+   * sized by max-content, so one wide child — the editor's unwrapped code, or a
+   * long room code in the header — stretched the whole page past the viewport and
+   * gave every screen a horizontal scrollbar. */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto;
   height: 100%;
   background: var(--paper);
@@ -292,7 +297,29 @@ kbd {
   align-items: center;
 }
 
+/*
+ * The side pane holds two things that behave differently, so it is a column of
+ * two regions rather than one scrolling block.
+ *
+ * The console is the tool: it is where a goal is typed and where the answer
+ * appears, so it stays put. Facts are a list that grows without limit, so they
+ * take the remaining height and scroll inside it. Letting the whole pane scroll
+ * meant a room with twenty facts pushed the console off the top of the screen —
+ * the one control a visitor needs, displaced by the least urgent content.
+ */
 .pane--side {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.pane--side > .console {
+  flex: 0 0 auto;
+}
+
+.pane--side > .facts {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -372,6 +399,17 @@ kbd {
 .btn--small {
   padding: 3px 8px;
   font-size: 12px;
+}
+
+/*
+ * Import is a `<label>` wrapping a visually-hidden file input, because a file
+ * input cannot be styled. The input is still focusable, so without this a
+ * keyboard user tabs onto a 1px clipped control and sees nothing at all — the
+ * focus ring is drawn on the label, which is the thing that looks like a button.
+ */
+.btn:has(> input:focus-visible) {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
 }
 
 /* ------------------------------------------------------------------ status */
@@ -777,6 +815,123 @@ kbd {
   font-size: 12px;
 }
 
+/*
+ * The query log.
+ *
+ * A `<details>` rather than a panel, because the log is a reference, not a tool:
+ * it is opened when somebody wants to see what the room has tried, and closed
+ * the rest of the time so the results table keeps the space. The summary is a
+ * real control, so it is a full-width target rather than a bare word.
+ */
+.log {
+  border-top: 1px solid var(--rule);
+  padding-top: calc(var(--step) * 3);
+}
+
+.log__summary {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  padding: 2px 0;
+  color: var(--ink-faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  list-style: none;
+}
+
+/* The default disclosure triangle sits on its own line in some browsers. */
+.log__summary::-webkit-details-marker {
+  display: none;
+}
+
+.log__summary::before {
+  content: '▸';
+  font-size: 9px;
+  line-height: 1;
+}
+
+.log[open] .log__summary::before {
+  content: '▾';
+}
+
+.log__summary:hover {
+  color: var(--ink);
+}
+
+.log__count {
+  color: var(--ink-faint);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.log__list {
+  display: flex;
+  flex-direction: column;
+  margin: calc(var(--step) * 2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.log__item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(var(--step) * 2);
+  padding: 4px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.log__item:last-child {
+  border-bottom: none;
+}
+
+/*
+ * Each entry is a button, because clicking it runs that goal again. Styled as
+ * text so the list reads as a log rather than a column of controls, with the
+ * underline on hover as the only hint that it is clickable.
+ */
+.log__goal {
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.log__goal code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  word-break: break-word;
+}
+
+.log__goal:hover code {
+  color: var(--signal-ink);
+  text-decoration: underline;
+}
+
+.log__meta {
+  flex: none;
+  color: var(--ink-faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.log__failed {
+  color: var(--danger);
+}
+
+.log__running {
+  color: var(--ink-faint);
+}
+
 /* ------------------------------------------------------------------- 5. facts */
 
 .facts {
@@ -786,9 +941,29 @@ kbd {
   padding: calc(var(--step) * 3);
 }
 
-.facts__intro {
-  color: var(--ink-soft);
+/*
+ * The facts region is labelled the same way the program is, because the two panes
+ * are peers and only one of them was named. The count is the one number worth
+ * showing here: it answers "did my fact arrive?" without scrolling the list.
+ */
+.facts__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(var(--step) * 2);
+}
+
+.facts__count {
+  color: var(--ink-faint);
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.facts__intro {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .facts__form {
@@ -1154,6 +1329,22 @@ kbd {
     padding: calc(var(--step) * 2) calc(var(--step) * 3);
   }
 
+  /*
+   * The brand and the actions share the header, and below ~520px they cannot all
+   * sit on one row: the theme picker alone needs 116px for "Solarized Light", and
+   * the buttons add ~200px more. Forcing one row made the picker collapse to a
+   * 19px sliver or pushed the page into horizontal scroll — both worse than a
+   * second row. So the header wraps, and the room code is what gives way: it is a
+   * label, and the Share dialog shows it in full when it is needed.
+   */
+  .app__room {
+    display: none;
+  }
+
+  .app__actions {
+    gap: calc(var(--step) * 1);
+  }
+
   .app__hint {
     display: none;
   }
@@ -1187,5 +1378,33 @@ kbd {
 
   .facts__input {
     flex-basis: 100%;
+  }
+}
+
+/*
+ * The narrowest phones.
+ *
+ * Five controls plus the brand do not fit in 320px, and squeezing them all means
+ * the theme picker collapses to an unreadable sliver. So the theme picker keeps a
+ * fixed, usable width and the two quiet buttons lose their padding: Export and
+ * Help stay present and clickable, because hiding Help would take away the only
+ * place the `?` shortcut is written down.
+ */
+/*
+ * The narrowest phones.
+ *
+ * With the header wrapping, the only thing left to do at 320px is tighten the
+ * gaps so the two rows do not cost more height than they must. Every control
+ * stays present: Help in particular, because it is the only place the `?`
+ * shortcut is written down.
+ */
+@media (max-width: 359px) {
+  .app__actions {
+    gap: 2px;
+  }
+
+  .app__actions .btn {
+    padding-left: 8px;
+    padding-right: 8px;
   }
 }

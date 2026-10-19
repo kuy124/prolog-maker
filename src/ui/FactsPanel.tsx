@@ -46,10 +46,14 @@ export function FactsPanel({ facts, me, onAdd, onRemove, validate }: Props) {
 
   return (
     <section className="facts" aria-label="Shared facts">
-      <p className="facts__intro">
-        Facts are shared with everyone in this room. They are asserted after the program, so a
-        fact can use a predicate the program defines.
-      </p>
+      <div className="facts__header">
+        <h2 className="pane__title">Facts</h2>
+        {facts.length > 0 ? (
+          <span className="facts__count">
+            {facts.length} {facts.length === 1 ? 'fact' : 'facts'}
+          </span>
+        ) : null}
+      </div>
 
       <form className="facts__form" onSubmit={submit}>
         <input
@@ -66,9 +70,9 @@ export function FactsPanel({ facts, me, onAdd, onRemove, validate }: Props) {
           autoCorrect="off"
           autoComplete="off"
           aria-invalid={error ? true : undefined}
-          aria-describedby={error ? 'fact-error' : undefined}
+          aria-describedby={error ? 'fact-error' : 'fact-help'}
         />
-        <button type="submit" className="btn btn--primary">
+        <button type="submit" className="btn">
           Add fact
         </button>
       </form>
@@ -77,10 +81,25 @@ export function FactsPanel({ facts, me, onAdd, onRemove, validate }: Props) {
         <p id="fact-error" className="note note--error" role="alert">
           {error}
         </p>
-      ) : null}
+      ) : (
+        /*
+         * The explanation belongs where it is needed, not above the form.
+         *
+         * It used to sit at the top of the panel, where it pushed the input down
+         * and was read before anyone had a reason to care. Below the field it is
+         * available exactly when a first-time reader is deciding what to type,
+         * and a returning reader is not made to step over it.
+         */
+        <p id="fact-help" className="facts__intro">
+          Shared with everyone here. Asserted after the program, so a fact can use a predicate
+          the program defines.
+        </p>
+      )}
 
       {facts.length === 0 ? (
-        <p className="note">No facts yet. A fact is a clause with no body, such as <code>parent(ada, bo)</code>.</p>
+        <p className="note">
+          No facts yet. A fact is a clause with no body, such as <code>parent(ada, bo)</code>.
+        </p>
       ) : (
         <ul className="facts__list">
           {facts.map((fact) => (

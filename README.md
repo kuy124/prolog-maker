@@ -35,6 +35,16 @@ Type a goal in the console and press **Enter**. Solutions arrive one at a time:
 
 Press **?** for help.
 
+## The query log
+
+Under the console is what the room has asked, newest first: the goal, how many
+solutions it had, and who ran it. It is shared, so it is the one place to see
+what everyone else tried — and clicking an entry runs that goal again, which is
+usually a better starting point than a blank prompt.
+
+The log is capped at the most recent 200 entries, and **Save a copy** writes it
+into the JSON file along with the program and the facts.
+
 ## Facts
 
 A fact is a clause with no body, and it is shared: everyone in the room sees it,

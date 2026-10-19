@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { decodeBindings, formatTerm, isEmptySolution, type Term } from '../model/term';
 import type { WireBindings } from '../engine/protocol';
+import type { LogEntry } from '../collab/ydoc';
 
 export interface ConsoleProps {
   /** Runs `goal`. */
@@ -61,6 +62,15 @@ export interface ConsoleProps {
    * wrong goal whenever the two have drifted apart.
    */
   onGoalChange: (goal: string) => void;
+  /**
+   * What has been asked in this room, newest first.
+   *
+   * The log is shared, so this is the one place a group can see what everyone else
+   * tried — including the goal somebody else already solved. Without a way to read
+   * it, the log was written, capped and exported but never seen, and the promise
+   * that a group could re-run each other's queries was not kept.
+   */
+  log: LogEntry[];
 }
 
 const PAGE = 100;
@@ -81,6 +91,7 @@ export function Console({
   waiting,
   goal,
   onGoalChange,
+  log,
 }: ConsoleProps) {
   const [shown, setShown] = useState(PAGE);
   const [draft, setDraft] = useState('');
@@ -312,6 +323,57 @@ export function Console({
       ) : null}
 
       {rows.length === 0 && exhausted && !error ? <p className="note">No solutions.</p> : null}
+
+      {/*
+        What the room has asked.
+        
+        Collapsed, because the answer to the current goal is what the eye is here
+        for and a growing history underneath it would push the results table up
+        and off the screen. It opens on demand, newest first, and each entry runs
+        again when clicked — which is the whole reason a shared log is worth
+        keeping: somebody else's working query is a better starting point than a
+        blank prompt.
+      */}
+      <details className="log" open={false}>
+        <summary className="log__summary">
+          Query log
+          <span className="log__count">{log.length === 0 ? 'empty' : log.length}</span>
+        </summary>
+        {log.length === 0 ? (
+          <p className="note">
+            Nothing asked yet. Goals you run appear here for everyone in the room.
+          </p>
+        ) : (
+          <ul className="log__list">
+            {[...log].reverse().map((entry) => (
+              <li key={entry.id} className="log__item">
+                <button
+                  type="button"
+                  className="log__goal"
+                  onClick={() => {
+                    onGoalChange(entry.goal);
+                    onRun(entry.goal);
+                  }}
+                  title={`Run ${entry.goal} again`}
+                >
+                  <code>{entry.goal}</code>
+                </button>
+                <span className="log__meta">
+                  {entry.error ? (
+                    <span className="log__failed">failed</span>
+                  ) : entry.count === null ? (
+                    <span className="log__running">ran</span>
+                  ) : (
+                    `${entry.count} ${entry.count === 1 ? 'solution' : 'solutions'}`
+                  )}
+                  {' · '}
+                  {entry.who}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </details>
     </section>
   );
 }

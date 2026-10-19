@@ -197,6 +197,30 @@ export function appendLog(doc: Y.Doc, entry: LogEntry): void {
 }
 
 /**
+ * Records how an entry turned out, once the engine has finished with it.
+ *
+ * A log entry is appended when a goal is opened, because that is the moment worth
+ * sharing — "somebody is running this" — but the outcome is not known then. The
+ * count is written back afterwards so the log reads as a record of what happened
+ * rather than a list of goals that were typed. Without this the `count` field was
+ * declared, documented, exported, and never once set.
+ *
+ * The entry is replaced rather than mutated: a `Y.Array` holds plain values, and
+ * assigning into a copy is how a change reaches every peer.
+ */
+export function updateLog(doc: Y.Doc, id: string, patch: Partial<Omit<LogEntry, 'id'>>): void {
+  const log = doc.getArray<LogEntry>(LOG);
+  const index = log.toArray().findIndex((entry) => entry && entry.id === id);
+  if (index === -1) return;
+  const current = log.get(index);
+  if (!current) return;
+  doc.transact(() => {
+    log.delete(index, 1);
+    log.insert(index, [{ ...current, ...patch }]);
+  });
+}
+
+/**
  * The facts file handed to the engine.
  *
  * Each fact is written as a clause terminated by a full stop. The term is not
