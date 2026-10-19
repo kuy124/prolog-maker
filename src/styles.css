@@ -605,9 +605,25 @@ kbd {
   overflow: auto;
 }
 
+/*
+ * Selection inside the editor.
+ *
+ * The textarea sits on top of the highlight layer with `color: transparent`, so
+ * that the `<pre>` behind it is what draws the glyphs. Its selection background,
+ * though, is painted above that layer — which means an opaque tint here does not
+ * tint the code, it *replaces* it. Selecting a block used to turn it into a solid
+ * bar of `--signal-soft` with nothing legible in it: the one moment a reader is
+ * most likely to be copying code is the moment they could no longer read it.
+ *
+ * So the selected run is drawn by the textarea itself, in ink, on the tint. It is
+ * the same text in the same face at the same metrics, so it lands exactly where
+ * the highlight layer had it; the only change is that the syntax colours give way
+ * to plain ink, which is the normal trade for a selection and costs nothing —
+ * selected code is being read as text, not as syntax.
+ */
 .editor__input::selection {
   background: var(--signal-soft);
-  color: transparent;
+  color: var(--ink);
 }
 
 .editor__caret {
