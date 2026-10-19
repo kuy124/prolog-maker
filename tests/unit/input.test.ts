@@ -59,7 +59,7 @@ function answer(handle: OpenQuery, name: string): string {
 
 function fresh(): PrologEngine {
   const engine = new PrologEngine(instance, sink);
-  engine.consult(QUESTIONNAIRE, '');
+  engine.consult(QUESTIONNAIRE);
   engine.resetOutput();
   return engine;
 }
@@ -75,7 +75,7 @@ describe('reading answers', () => {
     } finally {
       handle.close();
     }
-    expect(engine.takeOutput()).toBe('pertama\nyes\nkedua\nno\nselesai\n');
+    expect(engine.takeOutput()).toBe('?- start.\npertama\n|: y.\nyes\nkedua\n|: t.\nno\nselesai\n');
   });
 
   /*
@@ -158,7 +158,7 @@ describe('reading answers', () => {
     // Checked through `write/1` rather than through the returned bindings, so what is
     // asserted is that the answer reached Prolog as a compound term.
     const engine = new PrologEngine(instance, sink);
-    engine.consult('echo(A) :- read(A), write(got(A)), nl.\n', '');
+    engine.consult('echo(A) :- read(A), write(got(A)), nl.\n');
     engine.resetOutput();
     engine.setInput(['person(ada, prolog).']);
     const { handle } = engine.open('echo(_).');
@@ -167,7 +167,7 @@ describe('reading answers', () => {
     } finally {
       handle.close();
     }
-    expect(engine.takeOutput()).toBe('got(person(ada,prolog))\n');
+    expect(engine.takeOutput()).toBe('?- echo(_).\n|: person(ada,prolog).\ngot(person(ada,prolog))\n');
   });
 
   it('blank lines are dropped rather than being a parse error', () => {
@@ -200,7 +200,7 @@ describe('reading answers', () => {
     } finally {
       second.handle.close();
     }
-    expect(engine.takeOutput()).toBe('pertama\nno\n');
+    expect(engine.takeOutput()).toBe('?- ask(pertama, _).\npertama\n|: t.\nno\n');
   });
 });
 
@@ -218,7 +218,7 @@ describe('the transcript', () => {
     } finally {
       handle.close();
     }
-    expect(engine.takeOutput()).toBe('pertama\nyes\nkedua\nno\nselesai\n');
+    expect(engine.takeOutput()).toBe('?- start.\npertama\n|: y.\nyes\nkedua\n|: t.\nno\nselesai\n');
   });
 
   it('does not end a query when the transcript is read mid-enumeration', () => {
@@ -234,14 +234,14 @@ describe('the transcript', () => {
     const engine = new PrologEngine(instance, sink);
     // `step(N)` first, so N is bound before it is printed: writing an unbound variable
 // prints `_10862`, which would say nothing about which solution produced it.
-    engine.consult('step(1).\nstep(2).\nstep(3).\nsay(N) :- step(N), write(sol(N)), nl.\n', '');
+    engine.consult('step(1).\nstep(2).\nstep(3).\nsay(N) :- step(N), write(sol(N)), nl.\n');
     engine.resetOutput();
 
     const { handle } = engine.open('say(N).');
     try {
       expect(handle.next()?.bindings).toMatchObject({ N: 1 });
       // The reader runs while the query is open and still has alternatives.
-      expect(engine.takeOutput()).toBe('sol(1)\n');
+      expect(engine.takeOutput()).toBe('?- say(N).\nsol(1)\n');
       // Without the fix these never arrive: reading closed the query.
       expect(handle.next()?.bindings).toMatchObject({ N: 2 });
       expect(engine.takeOutput()).toBe('sol(2)\n');
@@ -261,7 +261,7 @@ describe('the transcript', () => {
     } finally {
       handle.close();
     }
-    expect(engine.takeOutput()).toBe('pertama\nyes\nkedua\nyes\nselesai\n');
+    expect(engine.takeOutput()).toBe('?- start.\npertama\n|: y.\nyes\nkedua\n|: y.\nyes\nselesai\n');
     // Nothing has happened since, so a second drain is empty rather than a copy.
     expect(engine.takeOutput()).toBe('');
   });
@@ -275,7 +275,7 @@ describe('the transcript', () => {
     } finally {
       first.handle.close();
     }
-    expect(engine.takeOutput()).toBe('satu\nyes\n');
+    expect(engine.takeOutput()).toBe('?- ask(satu, _).\nsatu\n|: y.\nyes\n');
 
     engine.resetOutput();
     engine.setInput(['t']);
@@ -286,7 +286,7 @@ describe('the transcript', () => {
       second.handle.close();
     }
     // A reset really resets: the second run shows only its own line.
-    expect(engine.takeOutput()).toBe('dua\nno\n');
+    expect(engine.takeOutput()).toBe('?- ask(dua, _).\ndua\n|: t.\nno\n');
   });
 
   it('keeps whatever a failing goal managed to write before it failed', () => {
@@ -296,14 +296,16 @@ describe('the transcript', () => {
     expect(() => handle.next()).toThrow(/Unknown procedure/);
     // A goal that writes and then dies still leaves a transcript: the text before
     // the failure is the part a person needs in order to see what went wrong.
-    expect(engine.takeOutput()).toBe('pertama\nyes\n');
+    expect(engine.takeOutput()).toBe('?- ask(pertama, _), nope(1).\npertama\n|: y.\nyes\n');
   });
 
   it('writes nothing for a goal that fails before it prints', () => {
     const engine = fresh();
     const { handle } = engine.open('nope(1).');
     expect(() => handle.next()).toThrow(/Unknown procedure/);
-    expect(engine.takeOutput()).toBe('');
+    // The goal is echoed even though it printed nothing: the transcript is a
+    // record of the session, and "I ran this and it failed" is part of it.
+    expect(engine.takeOutput()).toBe('?- nope(1).\n');
   });
 });
 

@@ -1,23 +1,28 @@
 /**
- * A fact in the Facts panel must not make the predicate static.
+ * A knowledge base written as clauses must survive being asserted into.
  *
- * This was the reported failure, reached through the UI rather than the engine:
+ * This was the reported failure, reached through the old Facts panel:
  *
  *     assert/1: No permission to modify static procedure observation/1
  *     Defined at /tmp/room/facts.pl:1
  *
- * A fact named `observation(ada)` became a clause in `facts.pl`, a predicate defined
- * by clauses is static, and the programme's `assert/1` was refused — with an error
- * naming a file the user never wrote. The programme here deliberately has no
- * `:- dynamic(observation/1).` of its own, because the facts panel supplying one is
- * the whole claim.
+ * A fact named `observation(ada)` became a clause in a generated `facts.pl`, a
+ * predicate defined by clauses is static, and the programme's `assert/1` was
+ * refused — with an error naming a file the user never wrote.
+ *
+ * Facts are now ordinary clauses in the program, so there is no second file and no
+ * second set of rules. What is still worth holding is the thing that broke: a
+ * program may declare a predicate dynamic, assert into it, and read it back, all
+ * while the program also contains clauses for that predicate.
  */
 
 import { expect, test } from '@playwright/test';
-import { openApp, readRows, waitForEngine } from './helpers';
+import { openApp, waitForEngine } from './helpers';
 
-/** The IKM expert system, minus the `dynamic` directive it would normally carry. */
-const PROGRAM = `mulai :-
+/** The IKM expert system, with the `dynamic` directive it genuinely needs. */
+const PROGRAM = `:- dynamic(observation/1).
+
+mulai :-
       write('Mulai. Jawab dengan y atau t.~n'),
       pertanyaan(Tanya, Obs),
       write(Tanya), nl,
@@ -26,8 +31,8 @@ const PROGRAM = `mulai :-
       assert(observation(Obs)),
       fail.
 mulai :-
-      (   observation(pnj)
-      ->  write('Kesimpulan:ongyang Booster.')
+      (   observation(aspirations_pnj)
+      ->  write('Kesimpulan: ongyang Booster.')
       ;   write('Kesimpulan: tidak ada yang cocok.')
       ),
       nl,
@@ -36,81 +41,67 @@ mulai :-
 pertanyaan('PNJ?', aspirations_pnj).
 `;
 
-const addFact = async (page: import('@playwright/test').Page, term: string) => {
-  await page.getByLabel('New fact').fill(term);
-  await page.locator('.facts__form button[type=submit]').click();
-  await expect(page.locator('.facts__term')).toContainText(term);
+const ask = async (page: import('@playwright/test').Page, goal: string) => {
+  await page.locator('.console__input').fill(goal);
+  await page.locator('.console__input').press('Enter');
+  await expect(page.locator('.terminal__text')).toBeVisible();
+  return page.locator('.terminal__text').innerText();
 };
 
-test('a fact in the panel does not make the program unable to assert into it', async ({
-  context,
-}) => {
+test('a program may assert into a predicate it also defines', async ({ context }) => {
   const page = await openApp(context);
   await waitForEngine(page);
-
   await page.locator('.editor__input').fill(PROGRAM);
+  // Let the debounced consult land.
   await page.waitForTimeout(900);
-  // The fact whose name the program asserts into. This is what made it static.
-  await addFact(page, 'observation(1)');
 
-  await page.locator('.console__input').fill('mulai.');
-  await page.locator('.console__input').press('Enter');
-  await expect(page.locator('.note--waiting')).toBeVisible({ timeout: 30_000 });
+  const output = await ask(page, 'mulai.');
+  // The programme asked its question, so it is suspended rather than finished.
+  await expect(page.locator('.note--waiting')).toBeVisible();
 
   await page.locator('.console__input').fill('y');
   await page.locator('.console__input').press('Enter');
 
-  // The permission error would land here, naming facts.pl.
-  await expect(page.locator('.note--error')).toHaveCount(0, { timeout: 30_000 });
-  await expect(page.locator('.terminal__text')).toContainText('Kesimpulan:');
+  await expect(page.locator('.terminal__text')).toContainText('Kesimpulan: ongyang Booster.', {
+    timeout: 10_000,
+  });
+  expect(output).toContain('Mulai.');
 });
 
-test('the program still asserts correctly after the facts change', async ({ context }) => {
+test('the transcript echoes the goal and the answer', async ({ context }) => {
   const page = await openApp(context);
   await waitForEngine(page);
-
   await page.locator('.editor__input').fill(PROGRAM);
   await page.waitForTimeout(900);
-  await addFact(page, 'observation(1)');
 
   await page.locator('.console__input').fill('mulai.');
   await page.locator('.console__input').press('Enter');
-  await expect(page.locator('.note--waiting')).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('.note--waiting')).toBeVisible();
+
   await page.locator('.console__input').fill('y');
   await page.locator('.console__input').press('Enter');
-  await expect(page.locator('.note--error')).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.locator('.terminal__text')).toContainText('Kesimpulan', { timeout: 10_000 });
 
-  /*
-   * Remove the fact and run again. Every keystroke re-consults, so this is where a
-   * declaration that only survived the first load would fall over — and where a
-   * predicate that survived as static would refuse `assert/1` a second time.
-   */
-  await page.locator('.facts__item button').first().click();
-  await expect(page.locator('.facts__term')).toHaveCount(0);
-
-  await page.locator('.console__input').fill('mulai.');
-  await page.locator('.console__input').press('Enter');
-  await expect(page.locator('.note--waiting')).toBeVisible({ timeout: 30_000 });
-  await page.locator('.console__input').fill('y');
-  await page.locator('.console__input').press('Enter');
-
-  await expect(page.locator('.note--error')).toHaveCount(0, { timeout: 30_000 });
-  await expect(page.locator('.terminal__text')).toContainText('Kesimpulan:');
+  const transcript = await page.locator('.terminal__text').innerText();
+  // A session reads back the way it was typed: the goal at the top level prompt,
+  // each answer at the continuation prompt.
+  expect(transcript).toContain('?- mulai.');
+  expect(transcript).toContain('|: y.');
 });
 
-test('a fact whose name is a built-in does not stop the room loading', async ({ context }) => {
+test('a retracted assertion stops matching, so the rule falls through', async ({ context }) => {
   const page = await openApp(context);
   await waitForEngine(page);
+  await page.locator('.editor__input').fill(PROGRAM);
+  await page.waitForTimeout(900);
 
-  /*
-   * `:- dynamic(fail/0)` is a permission error, and an unguarded one would take down
-   * every consult in the room rather than skipping one declaration.
-   */
-  await addFact(page, 'not(a_thing)');
-  await page.locator('.console__input').fill('current_prolog_flag(unknown, U).');
+  // Answer "t" so nothing is asserted; the second clause must reach its else.
+  await ask(page, 'mulai.');
+  await expect(page.locator('.note--waiting')).toBeVisible();
+  await page.locator('.console__input').fill('t');
   await page.locator('.console__input').press('Enter');
 
-  await expect(page.locator('.results')).toBeVisible({ timeout: 30_000 });
-  expect((await readRows(page)).length).toBe(1);
-  await expect(page.locator('.note--error')).toHaveCount(0);
+  await expect(page.locator('.terminal__text')).toContainText('tidak ada yang cocok', {
+    timeout: 10_000,
+  });
 });

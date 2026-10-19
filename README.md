@@ -33,6 +33,13 @@ Type a goal in the console and press **Enter**. Solutions arrive one at a time:
   starts, Stop replaces the engine and reloads the program. Solutions already on
   screen stay.
 
+The output pane is a transcript, not a log of results: it echoes the goal at the
+`?- ` prompt and every answer at the `|: ` prompt, so a session reads back exactly
+as it was typed and can be pasted into a report.
+
+A goal that calls `read/1` suspends and asks for a line. Answer at the same
+prompt — the sigil changes to `|` — and press **Enter**.
+
 Press **?** for help.
 
 ## The query log
@@ -43,15 +50,14 @@ what everyone else tried — and clicking an entry runs that goal again, which i
 usually a better starting point than a blank prompt.
 
 The log is capped at the most recent 200 entries, and **Save a copy** writes it
-into the JSON file along with the program and the facts.
+into the JSON file along with the program.
 
-## Facts
+## Facts are clauses
 
-A fact is a clause with no body, and it is shared: everyone in the room sees it,
-and it is asserted into every peer's own engine. Facts are deliberately data
-rather than `assert/1` calls, because the engine is local — a fact one person
-adds has to arrive as data and be re-asserted everywhere, and the program can be
-rewritten without losing them.
+There is no separate facts panel: a knowledge base is written straight into the
+program, as clauses, like every other part of Prolog. That means facts merge and
+undo like the rest of the source, a fact can have a body, and a program can
+`assert/1` into a predicate it also defines.
 
 Four examples open in a new room: a family tree, list basics, eight queens, and a
 small definite-clause grammar.
@@ -66,7 +72,7 @@ A room code is the whole address. **Share** offers two links:
 The second is what you want for a handout, a homework exercise, or anything that
 has to outlive a browser tab.
 
-**Save a copy** writes a JSON file with the program, the facts, and the log. It
+**Save a copy** writes a JSON file with the program and the log. It
 needs nobody online and cannot be truncated by a chat app.
 
 ## Trust
@@ -145,7 +151,7 @@ src/
   engine/     the Prolog engine: engine.ts is the logic, engine.worker.ts a shim
   editor/     the program editor and its Prolog syntax highlighter
   collab/     Yjs document, WebRTC provider, peer identity
-  ui/         console, facts, presence, dialogs, themes
+  ui/         console, presence, dialogs, themes
   model/      term rendering, share links, examples
 ```
 

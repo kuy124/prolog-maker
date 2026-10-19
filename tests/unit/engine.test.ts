@@ -110,14 +110,14 @@ describe('check', () => {
 describe('consult', () => {
   it('loads a program and makes its predicates callable', () => {
     const prolog = engine();
-    prolog.consult(PROGRAM, '');
+    prolog.consult(PROGRAM);
     expect(solutions(prolog, 'likes(ada, X).')).toEqual([{ X: 'prolog' }, { X: 'tea' }]);
   });
 
   it('replaces rather than appends, so re-consulting is idempotent', () => {
     const prolog = engine();
-    prolog.consult('v(1).\n', '');
-    prolog.consult('v(2).\n', '');
+    prolog.consult('v(1).\n');
+    prolog.consult('v(2).\n');
     expect(column(prolog, 'findall(X, v(X), L).', 'L')).toEqual(['[2]']);
   });
 
@@ -127,11 +127,11 @@ describe('consult', () => {
     // outright — consulting closes the open handle instead of corrupting the
     // engine, and the program still loads.
     const prolog = engine();
-    prolog.consult(PROGRAM, '');
+    prolog.consult(PROGRAM);
     const { handle } = prolog.open('likes(ada, X).');
     expect(handle.next()).not.toBeNull();
 
-    expect(() => prolog.consult('v(7).\n', '')).not.toThrow();
+    expect(() => prolog.consult('v(7).\n')).not.toThrow();
     expect(column(prolog, 'v(X).', 'X')).toEqual(['7']);
     // Consulting closed the stale handle rather than leaving it dangling.
     expect(handle.closed).toBe(true);
@@ -140,8 +140,8 @@ describe('consult', () => {
 
   it('leaves the previous program loaded when the new one does not parse', () => {
     const prolog = engine();
-    prolog.consult(PROGRAM, '');
-    expect(() => prolog.consult('w(1).\nbroken(.\n', '')).toThrow(PrologError);
+    prolog.consult(PROGRAM);
+    expect(() => prolog.consult('w(1).\nbroken(.\n')).toThrow(PrologError);
     // Still the old program, not a half-loaded one.
     expect(solutions(prolog, 'likes(ada, X).')).toHaveLength(2);
   });
@@ -149,7 +149,7 @@ describe('consult', () => {
   it('reports the line of the error it refused', () => {
     const prolog = engine();
     try {
-      prolog.consult('ok(1).\nbroken(.\n', '');
+      prolog.consult('ok(1).\nbroken(.\n');
       expect.unreachable('should have thrown');
     } catch (error) {
       expect(error).toBeInstanceOf(PrologError);
@@ -157,15 +157,17 @@ describe('consult', () => {
     }
   });
 
-  it('consults facts after the program, so a fact may use a program predicate', () => {
+  it('loads a knowledge base written as ordinary clauses', () => {
+    // Facts are clauses now, so a program may read a predicate it also defines —
+    // which the old separate facts file could not express.
     const prolog = engine();
-    prolog.consult('adult(X) :- person(X, A), A >= 18.\n', 'person(ada, 36).\nperson(kid, 9).\n');
+    prolog.consult('person(ada, 36).\nperson(kid, 9).\nadult(X) :- person(X, A), A >= 18.\n');
     expect(solutions(prolog, 'adult(X).')).toEqual([{ X: 'ada' }]);
   });
 
   it('survives many reloads without the knowledge base growing', () => {
     const prolog = engine();
-    for (let i = 0; i < 5; i += 1) prolog.consult('v(1).\n', '');
+    for (let i = 0; i < 5; i += 1) prolog.consult('v(1).\n');
     expect(column(prolog, 'findall(X, v(X), L).', 'L')).toEqual(['[1]']);
   });
 });
@@ -173,19 +175,19 @@ describe('consult', () => {
 describe('open', () => {
   it('names the variables in the order the goal mentions them', () => {
     const prolog = engine();
-    prolog.consult(PROGRAM, '');
+    prolog.consult(PROGRAM);
     expect(prolog.open('pair(From, To).').variables).toEqual(['From', 'To']);
   });
 
   it('omits anonymous variables', () => {
     const prolog = engine();
-    prolog.consult(PROGRAM, '');
+    prolog.consult(PROGRAM);
     expect(prolog.open('likes(X, _).').variables).toEqual(['X']);
   });
 
   it('reports no variables for a ground goal', () => {
     const prolog = engine();
-    prolog.consult(PROGRAM, '');
+    prolog.consult(PROGRAM);
     expect(prolog.open('fail.').variables).toEqual([]);
   });
 });
@@ -193,19 +195,19 @@ describe('open', () => {
 describe('enumeration', () => {
   it('walks every solution and then stops', () => {
     const prolog = engine();
-    prolog.consult(PROGRAM, '');
+    prolog.consult(PROGRAM);
     expect(solutions(prolog, 'likes(ada, X).')).toHaveLength(2);
   });
 
   it('marks the final solution as having no alternatives left', () => {
     const prolog = engine();
-    prolog.consult('one(1).\n', '');
+    prolog.consult('one(1).\n');
     expect(prolog.open('one(X).').handle.next()).toMatchObject({ more: false });
   });
 
   it('marks an earlier solution as having more', () => {
     const prolog = engine();
-    prolog.consult(PROGRAM, '');
+    prolog.consult(PROGRAM);
     const { handle } = prolog.open('likes(ada, X).');
     expect(handle.next()).toMatchObject({ more: true });
     handle.close();
@@ -213,19 +215,19 @@ describe('enumeration', () => {
 
   it('returns null for a goal with no solutions', () => {
     const prolog = engine();
-    prolog.consult(PROGRAM, '');
+    prolog.consult(PROGRAM);
     expect(prolog.open('likes(zed, X).').handle.next()).toBeNull();
   });
 
   it('returns one solution with no bindings for a ground goal that succeeds', () => {
     const prolog = engine();
-    prolog.consult(PROGRAM, '');
+    prolog.consult(PROGRAM);
     expect(solutions(prolog, 'likes(ada, prolog).')).toEqual([{}]);
   });
 
   it('stops returning solutions after close', () => {
     const prolog = engine();
-    prolog.consult(PROGRAM, '');
+    prolog.consult(PROGRAM);
     const { handle } = prolog.open('likes(ada, X).');
     expect(handle.next()).not.toBeNull();
     handle.close();
@@ -236,7 +238,7 @@ describe('enumeration', () => {
     // The failure this guards against is silent and looks like the program
     // vanished: every later goal reports `Unknown procedure`.
     const prolog = engine();
-    prolog.consult(PROGRAM, '');
+    prolog.consult(PROGRAM);
     const { handle } = prolog.open('likes(ada, X).');
     handle.next();
     handle.close();
@@ -247,13 +249,13 @@ describe('enumeration', () => {
 describe('errors', () => {
   it('raises an undefined procedure as an error, not as no solutions', () => {
     const prolog = engine();
-    prolog.consult(PROGRAM, '');
+    prolog.consult(PROGRAM);
     expect(() => prolog.open('nope(1).').handle.next()).toThrow(/Unknown procedure/);
   });
 
   it('raises a division by zero from the goal body', () => {
     const prolog = engine();
-    prolog.consult(PROGRAM, '');
+    prolog.consult(PROGRAM);
     expect(() => prolog.open('X is 1/0.').handle.next()).toThrow(/Division by zero/);
   });
 });

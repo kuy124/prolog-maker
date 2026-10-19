@@ -34,7 +34,7 @@ export type WireBindings = Record<string, WireTerm>;
 
 export type EngineRequest =
   | { id: number; kind: 'boot' }
-  | { id: number; kind: 'consult'; program: string; facts: string }
+  | { id: number; kind: 'consult'; program: string }
   /** Seeds the answers `read/1` will consume, in order. Empty means "suspend". */
   | { id: number; kind: 'input'; lines: string[] }
   | { id: number; kind: 'open'; goal: string }

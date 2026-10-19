@@ -305,9 +305,10 @@ test('a fresh goal abandons a suspended one', async ({ context }) => {
   expect((await readRows(page)).length).toBe(1);
   await expect(page.locator('.note--waiting')).toHaveCount(0);
 
-  // The questionnaire's output is gone with it. This goal prints nothing, so the
-  // terminal block is not rendered at all.
-  expect(await transcript(page)).toBe('');
+  // The questionnaire's output is gone with it. This goal prints nothing of its
+  // own, so the transcript holds only its own echo — the record that this is what
+  // was run, which is what a terminal shows.
+  expect(await transcript(page)).toBe('?- current_prolog_flag(toplevel_goal, T).\n');
 });
 
 

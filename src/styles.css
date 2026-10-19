@@ -10,10 +10,9 @@
  *   2. Layout: header, main, footer
  *   3. Editor
  *   4. Console
- *   5. Facts
- *   6. Presence
- *   7. Dialogs
- *   8. Small screens
+ *   5. Presence
+ *   6. Dialogs
+ *   7. Small screens
  */
 
 /* ------------------------------------------------------------------ 1. base */
@@ -356,29 +355,20 @@ kbd {
 }
 
 /*
- * The side pane holds two things that behave differently, so it is a column of
- * two regions rather than one scrolling block.
- *
- * The console is the tool: it is where a goal is typed and where the answer
- * appears, so it stays put. Facts are a list that grows without limit, so they
- * take the remaining height and scroll inside it. Letting the whole pane scroll
- * meant a room with twenty facts pushed the console off the top of the screen —
- * the one control a visitor needs, displaced by the least urgent content.
+ * The side pane is the console and nothing else now that facts are clauses in the
+ * program. It scrolls as one region, because a long transcript and a long result
+ * table are both things a reader scrolls through in order — unlike the facts list,
+ * which used to grow without limit and push the prompt off the top of the screen.
  */
 .pane--side {
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .pane--side > .console {
   flex: 0 0 auto;
-}
-
-.pane--side > .facts {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
 }
 
 .app__footer {
@@ -706,7 +696,6 @@ kbd {
 }
 
 .console__input,
-.facts__input,
 .field__input,
 .presence__rename {
   flex: 1;
@@ -721,7 +710,6 @@ kbd {
 }
 
 .console__input:focus,
-.facts__input:focus,
 .field__input:focus,
 .presence__rename:focus {
   border-color: var(--signal);
@@ -1006,81 +994,7 @@ kbd {
   color: var(--ink-faint);
 }
 
-/* ------------------------------------------------------------------- 5. facts */
-
-.facts {
-  display: flex;
-  flex-direction: column;
-  gap: calc(var(--step) * 3);
-  padding: calc(var(--step) * 3);
-}
-
-/*
- * The facts region is labelled the same way the program is, because the two panes
- * are peers and only one of them was named. The count is the one number worth
- * showing here: it answers "did my fact arrive?" without scrolling the list.
- */
-.facts__header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: calc(var(--step) * 2);
-}
-
-.facts__count {
-  color: var(--ink-faint);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-.facts__intro {
-  margin: 0;
-  color: var(--ink-faint);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.facts__form {
-  display: flex;
-  gap: calc(var(--step) * 2);
-}
-
-.facts__list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.facts__item {
-  display: flex;
-  align-items: center;
-  gap: calc(var(--step) * 2);
-  padding: 5px 8px;
-  border-radius: var(--radius);
-}
-
-.facts__item:hover {
-  background: var(--paper-sunken);
-}
-
-.facts__term {
-  flex: 1;
-  min-width: 0;
-  color: var(--ink);
-  word-break: break-word;
-}
-
-.facts__author {
-  color: var(--ink-faint);
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-/* ---------------------------------------------------------------- 6. presence */
-
+/* ---------------------------------------------------------------- 5. presence */
 .presence {
   display: flex;
   align-items: center;
@@ -1142,7 +1056,7 @@ kbd {
   font-size: 12px;
 }
 
-/* ------------------------------------------------------------------ 7. dialogs */
+/* ------------------------------------------------------------------ 6. dialogs */
 
 .scrim {
   position: fixed;
@@ -1386,7 +1300,7 @@ kbd {
   cursor: pointer;
 }
 
-/* ------------------------------------------------------------- 8. small screens */
+/* ------------------------------------------------------------- 7. small screens */
 
 @media (max-width: 860px) {
   .app__main {
@@ -1444,14 +1358,6 @@ kbd {
   .modal__body,
   .modal__footer {
     padding: calc(var(--step) * 3);
-  }
-
-  .facts__form {
-    flex-wrap: wrap;
-  }
-
-  .facts__input {
-    flex-basis: 100%;
   }
 }
 

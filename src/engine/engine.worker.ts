@@ -115,7 +115,7 @@ scope.onmessage = (event: MessageEvent<EngineRequest>) => {
         case 'consult': {
           const prolog = await ready();
           try {
-            prolog.consult(request.program, request.facts);
+            prolog.consult(request.program);
             reply({ id: request.id, kind: 'consulted' });
           } catch (error) {
             const failure = error as { message?: string; line?: number | null };

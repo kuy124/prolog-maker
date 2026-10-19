@@ -22,7 +22,7 @@ export const EXAMPLES: Example[] = [
     id: 'family',
     name: 'Family tree',
     description: 'Facts and a recursive rule. Ask who is an ancestor of whom.',
-    program: `% A family tree. Add facts in the panel, or edit them here.
+    program: `% A family tree. Facts are just clauses, so edit them here like any other.
 
 parent(ada, bo).
 parent(bo, cy).

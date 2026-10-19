@@ -167,16 +167,17 @@ test('a fact added in one browser is usable in the other', async ({ browser }) =
   await setProgram(pageA, 'greets(X) :- person(X), friendly(X).\n');
   await expect(pageB.locator('.editor__input')).toContainText('greets', { timeout: 20_000 });
 
-  // Add both facts on B; A must receive them and be able to use them.
-  await pageB.locator('.facts__input').fill('person(ada)');
-  await pageB.locator('button', { hasText: 'Add fact' }).click();
-  await pageB.locator('.facts__input').fill('friendly(ada)');
-  await pageB.locator('button', { hasText: 'Add fact' }).click();
+  // B types the knowledge base straight into the program; A must receive it and be
+  // able to use it. This is what the old Facts panel did, now that facts are
+  // ordinary clauses — the point being that they sync and are usable, not how they
+  // were entered.
+  await pageB.locator('.editor__input').fill('greets(X) :- person(X), friendly(X).\nperson(ada).\nfriendly(ada).\n');
+  await expect(pageA.locator('.editor__input')).toHaveValue(
+    'greets(X) :- person(X), friendly(X).\nperson(ada).\nfriendly(ada).\n',
+    { timeout: 20_000 },
+  );
 
-  await expect(pageA.locator('.facts__list')).toContainText('person(ada)', { timeout: 20_000 });
-  await expect(pageA.locator('.facts__list')).toContainText('friendly(ada)');
-
-  // The receiving peer must assert them into its own engine.
+  // The receiving peer must consult them into its own engine.
   await pageA.waitForTimeout(1200);
   await runGoal(pageA, 'greets(X).');
   await expect(pageA.locator('.results')).toBeVisible();

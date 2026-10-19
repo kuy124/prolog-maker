@@ -62,10 +62,21 @@ read(Term) :-
 
 % Pop one answer, or throw. The throw is the suspension: it stops the goal at exactly
 % this point rather than failing past it.
+%
+% The answer is echoed as it is consumed, with the same '|: ' prompt SWI-Prolog's
+% toplevel uses for a read. Without it the transcript showed the questions and the
+% conclusion but not what was typed between them, so a session could not be read
+% back or pasted into a report — the answers simply were not there.
+%
+% Echoing here rather than in the browser is what makes the replay correct. A
+% resumed goal is re-entered from the top and consumes every earlier answer again,
+% so echoing at the point of consumption reproduces each line exactly once, in the
+% right place, with no bookkeeping on the host side.
 repl_next(Term) :-
     nb_getval(repl_queue, Queue),
     (   Queue = [Term|Rest]
-    ->  nb_setval(repl_queue, Rest)
+    ->  nb_setval(repl_queue, Rest),
+        write('|: '), write(Term), write('.'), nl
     ;   nb_setval(repl_waiting, true),
         throw(repl_need_input)
     ).

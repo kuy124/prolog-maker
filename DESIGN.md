@@ -78,9 +78,15 @@ rendered page.
 
 ## Layout
 
-The workspace is a two-pane split: the program on the left, the console and facts
-on the right. The editor takes the space because it is where the work happens,
-and the console is bounded because solutions are read, not scrolled.
+The workspace is a two-pane split: the program on the left, the console on the
+right. The editor takes the space because it is where the work happens, and the
+console is bounded because a session is read, not scrolled.
+
+The console's output pane is a transcript rather than a result list: it echoes the
+goal at the `?- ` prompt and each `read/1` answer at `|: `, the way a terminal does.
+That is what makes a session legible after the fact — without the echo, the
+transcript showed the questions and the conclusion but not what was answered
+between them, and could not be read back or pasted into a report.
 
 Below 860px the split becomes a row, and the side pane is capped at 46vh so the
 editor never disappears behind the keyboard.

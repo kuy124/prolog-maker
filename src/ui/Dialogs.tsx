@@ -9,7 +9,7 @@
  */
 
 import { useState } from 'react';
-import type { Fact, LogEntry } from '../collab/ydoc';
+import type { LogEntry } from '../collab/ydoc';
 import type { RoomFile } from '../model/snapshot';
 
 export function Modal({
@@ -163,13 +163,11 @@ export function ShareDialog({
 export function ExportDialog({
   room,
   program,
-  facts,
   log,
   onClose,
 }: {
   room: string;
   program: string;
-  facts: Fact[];
   log: LogEntry[];
   onClose: () => void;
 }) {
@@ -186,7 +184,7 @@ export function ExportDialog({
   };
 
   const asJson = () => {
-    const file: RoomFile = { version: 1, name: room, program, facts, log };
+    const file: RoomFile = { version: 2, name: room, program, log };
     download(`${room}.json`, JSON.stringify(file, null, 2) + '\n', 'application/json');
   };
 
@@ -217,14 +215,13 @@ export function ExportDialog({
     >
       <p className="field__help">
         The program is plain SWI-Prolog, so it runs unchanged in a terminal. The room file also
-        carries the shared facts and the query log, and can be imported to restore all three.
+        carries the query log and can be imported to restore both.
       </p>
       <pre className="export__preview" aria-label="Program source">
         {program}
       </pre>
       <p className="note">
-        {facts.length} {facts.length === 1 ? 'fact' : 'facts'} · {log.length} log{' '}
-        {log.length === 1 ? 'entry' : 'entries'}
+        {log.length} log {log.length === 1 ? 'entry' : 'entries'}
       </p>
     </Modal>
   );
@@ -236,8 +233,8 @@ const TOPICS = [
     body: (
       <>
         <p>
-          A shared SWI-Prolog workspace. Everyone in a room edits one program, adds facts to one
-          knowledge base, and runs goals against their own copy of the engine.
+          A shared SWI-Prolog workspace. Everyone in a room edits one program and runs goals
+          against their own copy of the engine.
         </p>
         <p>
           There is no server. The engine is compiled to WebAssembly and runs in this tab, which is

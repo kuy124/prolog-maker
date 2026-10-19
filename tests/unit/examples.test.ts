@@ -32,12 +32,12 @@ describe('examples', () => {
     it(`${example.id}: loads without a syntax error`, () => {
       const prolog = new PrologEngine(instance, sink);
       expect(prolog.check(example.program)).toBeNull();
-      expect(() => prolog.consult(example.program, '')).not.toThrow();
+      expect(() => prolog.consult(example.program)).not.toThrow();
     });
 
     it(`${example.id}: its goal produces at least one solution`, () => {
       const prolog = new PrologEngine(instance, sink);
-      prolog.consult(example.program, '');
+      prolog.consult(example.program);
       const { handle } = prolog.open(example.goal);
       try {
         expect(handle.next(), `${example.id}: ${example.goal}`).not.toBeNull();
@@ -49,7 +49,7 @@ describe('examples', () => {
 
   it('the eight queens example finds a real solution', () => {
     const prolog = new PrologEngine(instance, sink);
-    prolog.consult(exampleById('queens')!.program, '');
+    prolog.consult(exampleById('queens')!.program);
     const { handle } = prolog.open('queens(8, Qs).');
     try {
       const solution = handle.next();
@@ -66,7 +66,7 @@ describe('examples', () => {
 
   it('the grammar example accepts the sentence it claims to', () => {
     const prolog = new PrologEngine(instance, sink);
-    prolog.consult(exampleById('grammar')!.program, '');
+    prolog.consult(exampleById('grammar')!.program);
     const { handle } = prolog.open(exampleById('grammar')!.goal);
     try {
       expect(handle.next()).not.toBeNull();
@@ -77,7 +77,7 @@ describe('examples', () => {
 
   it('the grammar example rejects a sentence that does not parse', () => {
     const prolog = new PrologEngine(instance, sink);
-    prolog.consult(exampleById('grammar')!.program, '');
+    prolog.consult(exampleById('grammar')!.program);
     // `the cat chases` is grammatical — `verb_phrase --> verb` needs no object —
     // so the sentence that must fail is one with a word left over.
     const { handle } = prolog.open('phrase(sentence, [the, cat, chases, a, dog, cat], []).');
@@ -90,7 +90,7 @@ describe('examples', () => {
 
   it('the family example answers a recursive query', () => {
     const prolog = new PrologEngine(instance, sink);
-    prolog.consult(exampleById('family')!.program, '');
+    prolog.consult(exampleById('family')!.program);
     const { handle } = prolog.open('ancestor(ada, Who).');
     const found: unknown[] = [];
     try {

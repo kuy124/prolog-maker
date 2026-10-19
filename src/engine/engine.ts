@@ -41,8 +41,6 @@
 
 import type { WireBindings, WireTerm } from './protocol';
 import { REPL_SHIM } from './repl-shim';
-import { factsWithDynamic } from './facts';
-
 
 /**
  * The slice of the Emscripten module this app uses.
@@ -140,7 +138,17 @@ export class PrologError extends Error {
 }
 
 const PROGRAM_FILE = '/tmp/room/program.pl';
-const FACTS_FILE = '/tmp/room/facts.pl';
+
+/**
+ * A single-quoted Prolog atom holding `text`, escaped for embedding in a goal.
+ *
+ * Used to pass user-typed text into `write/1` without letting it become code: a
+ * goal containing a quote would otherwise close the atom early and run whatever
+ * followed it.
+ */
+function quoteAtom(text: string): string {
+  return `'${text.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+}
 
 /**
  * Where the transcript accumulates.
@@ -272,7 +280,6 @@ const READ_VARIABLES = `catch(read_term_from_atom(Goal, _, [variable_names(Ns)])
 export class PrologEngine {
   #instance: SwiplInstance;
   #program = '';
-  #facts = '';
   #scratch = 0;
   /** Text the engine printed to the terminal while the current capture was running. */
   #captured: string[] | null = null;
@@ -483,7 +490,7 @@ export class PrologEngine {
     return parseSyntaxError(captured);
   }
   /**
-   * Replaces the loaded program and facts.
+   * Replaces the loaded program.
    *
    * `consult/1` replaces a file's clauses rather than appending, so calling this
    * repeatedly is idempotent — which is what lets the editor re-consult on every
@@ -496,7 +503,7 @@ export class PrologEngine {
    * Throws a `PrologError` when the program does not parse, having left the
    * previously loaded program untouched.
    */
-  consult(program: string, facts: string): void {
+  consult(program: string): void {
     const issue = this.check(program);
     if (issue) {
       // The status line already shows the line number separately, so the message
@@ -507,7 +514,6 @@ export class PrologEngine {
     this.#live?.close();
 
     this.#program = program;
-    this.#facts = facts;
 
     this.#instance.prolog.call("catch(make_directory('/tmp/room'), _, true)");
     // The shim is prepended rather than loaded separately so that it is re-consulted
@@ -515,25 +521,11 @@ export class PrologEngine {
     // before any goal runs, and a separately-loaded file could be dropped by the
     // build or left stale by a redeploy.
     this.#instance.FS.writeFile(PROGRAM_FILE, `${REPL_SHIM}\n${program}`);
-    this.#instance.FS.writeFile(FACTS_FILE, factsWithDynamic(facts));
 
-    // Facts first, then the program. The order is load-bearing.
-    //
-    // `consult/1` treats a file as the whole definition of what it declares, so a
-    // predicate the facts define is re-established with the facts file's properties
-    // when the facts are consulted. Loading the program afterwards lets its own
-    // `:- dynamic(Name/Arity).` directives have the last word, which is what a person
-    // reading the program would expect. The reverse order silently undid them: a
-    // program that declared `observation/1` dynamic was left with a static
-    // `observation/1` and `assert/1` refused, naming a file they had never written.
-    //
     // Qualified as `user:` so the load lands in the module the console queries.
     // See the note at the top of the file.
     const loaded = this.#captureOutput(() => {
-      this.#ask(
-        `catch((user:consult('${FACTS_FILE}'), user:consult('${PROGRAM_FILE}')), E, ` +
-          `(write_canonical(E), nl, fail)).`,
-      );
+      this.#ask(`catch(user:consult('${PROGRAM_FILE}'), E, (write_canonical(E), nl, fail)).`);
     });
     const failure =
       parseSyntaxError(loaded) ?? (/error\(/.test(loaded) ? { line: 0, message: loaded } : null);
@@ -585,12 +577,37 @@ export class PrologEngine {
   open(goal: string): OpenResult {
     this.closeAll();
     const variables = this.#variableNames(goal);
+    // Echo the goal the way a Prolog toplevel does, so the transcript reads as a
+    // session: `?- mulai.` then the questions, then `|: y.` for each answer. Only
+    // the goal itself is echoed here — the answers are echoed by the shim, at the
+    // point they are consumed, so a resumed goal reproduces them exactly once.
+    this.#echoGoal(goal);
     const query = this.#instance.prolog.query(goal);
     const handle = new OpenQuery(query, () => {
       if (this.#live === handle) this.#live = null;
     });
     this.#live = handle;
     return { variables, handle };
+  }
+
+  /**
+   * Prints `?- goal.` into the transcript.
+   *
+   * Through Prolog rather than by appending to the host's buffer, because the host
+   * clears that buffer on every run — the echoed goal has to be part of the
+   * transcript the engine itself produces, or it would be wiped along with the
+   * replay prefix.
+   *
+   * A goal is echoed with exactly one trailing full stop: the console accepts it
+   * with or without one, and `mulai..` would be a lie about what was run.
+   */
+  #echoGoal(goal: string): void {
+    const text = goal.trim();
+    if (text.length === 0) return;
+    const shown = text.endsWith('.') ? text : `${text}.`;
+    // Quoted through write/1 rather than interpolated into the goal text: a goal
+    // containing a quote would otherwise end the atom and run whatever followed.
+    this.#ask(`write('?- '), write(${quoteAtom(shown)}), nl.`);
   }
 
   #variableNames(goal: string): string[] {
@@ -616,10 +633,6 @@ export class PrologEngine {
 
   get program(): string {
     return this.#program;
-  }
-
-  get facts(): string {
-    return this.#facts;
   }
 }
 

@@ -59,9 +59,9 @@ export class EngineClient {
    * program. Restarting has to reload the last program that *worked*, not the one
    * that was refused, or Stop would silently wipe a room's knowledge base.
    */
-  #pending: { program: string; facts: string } | null = null;
+  #pending: { program: string } | null = null;
   /** The last program the worker accepted, which is what it is running now. */
-  #loadedProgram: { program: string; facts: string } | null = null;
+  #loadedProgram: { program: string } | null = null;
   /** Resolvers waiting for the engine to be ready to accept a goal. */
   #ready: Array<() => void> = [];
   /** True once the current worker has loaded a program. */
@@ -99,7 +99,7 @@ export class EngineClient {
     // empty — which is correct: there is no working program to go back to.
     const program = this.#loadedProgram;
     if (program) {
-      this.#send({ id: this.#nextId++, kind: 'consult', program: program.program, facts: program.facts });
+      this.#send({ id: this.#nextId++, kind: 'consult', program: program.program });
     } else {
       this.#markReady();
     }
@@ -110,10 +110,10 @@ export class EngineClient {
     this.restart();
   }
 
-  consult(program: string, facts: string): void {
-    this.#pending = { program, facts };
+  consult(program: string): void {
+    this.#pending = { program };
     this.#loaded = false;
-    this.#send({ id: this.#nextId++, kind: 'consult', program, facts });
+    this.#send({ id: this.#nextId++, kind: 'consult', program });
   }
 
   /**

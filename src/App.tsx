@@ -16,7 +16,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as Y from 'yjs';
 import { ProgramEditor, type RemoteCaret } from './editor/ProgramEditor';
 import { Console } from './ui/Console';
-import { FactsPanel } from './ui/FactsPanel';
 import { PresenceBar } from './ui/PresenceBar';
 import { ExportDialog, HelpPanel, ShareDialog } from './ui/Dialogs';
 import { ThemePicker } from './ui/ThemePicker';
@@ -25,16 +24,11 @@ import { createRoom, readPeers, connectedPeerCount, type PeerState, type RoomHan
 import { createLocalIdentity, rememberIdentity, type Identity } from './collab/identity';
 import {
   PROGRAM,
-  addFact,
   appendLog,
-  factsSource,
-  readFacts,
   readLog,
   reconcileProgram,
-  removeFact,
   seedProgram,
   updateLog,
-  type Fact,
   type LogEntry,
 } from './collab/ydoc';
 import {
@@ -55,7 +49,7 @@ import {
 import { savedTheme, rememberTheme, applyTheme } from './ui/theme';
 import type { WireBindings } from './engine/protocol';
 
-type Session = { room: string; seed: { program: string; facts: Fact[] } | null; fromLink: boolean };
+type Session = { room: string; seed: { program: string } | null; fromLink: boolean };
 
 /** The room this browser was last in, so a reload returns to it. */
 const LAST_ROOM = 'prolog:last-room';
@@ -75,7 +69,7 @@ function readSession(): Session {
   if (parsed.room) {
     return {
       room: parsed.room,
-      seed: parsed.program !== undefined ? { program: parsed.program, facts: parsed.facts ?? [] } : null,
+      seed: parsed.program !== undefined ? { program: parsed.program } : null,
       fromLink: true,
     };
   }
@@ -170,7 +164,6 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
   const [bootMs, setBootMs] = useState(0);
   const [busy, setBusy] = useState(false);
 
-  const [facts, setFacts] = useState<Fact[]>([]);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [program, setProgram] = useState('');
   const [syntaxError, setSyntaxError] = useState<{ message: string; line: number | null } | null>(null);
@@ -200,7 +193,6 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
   const engineRef = useRef<EngineClient | null>(null);
   const outputBuffer = useRef<string[]>([]);
   const programRef = useRef('');
-  const factsRef = useRef<Fact[]>([]);
   /**
    * The room, in a ref as well as state.
    *
@@ -265,7 +257,6 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
       // shows the sender's program rather than a blank one.
       if (text.length === 0 && session.seed) {
         seedProgram(handle.ydoc, session.seed.program);
-        for (const fact of session.seed.facts) addFact(handle.ydoc, fact);
       } else if (text.length === 0) {
         seedProgram(handle.ydoc, START_PROGRAM);
       }
@@ -281,7 +272,6 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
     handle.ydoc.on('update', reconcile);
 
     const sync = () => {
-      setFacts(readFacts(handle.ydoc));
       setLog(readLog(handle.ydoc));
       setProgram(handle.ydoc.getText(PROGRAM).toString());
     };
@@ -403,7 +393,7 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
   }, [currentQuery]);
 
   /**
-   * Re-consults whenever the program or the facts change.
+   * Re-consults whenever the program changes.
    *
    * Debounced, because a consult parses the whole program and a keystroke is not a
    * reason to do that. The first consult is the exception: it runs immediately, so
@@ -416,22 +406,21 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
   const firstConsultDone = useRef(false);
   useEffect(() => {
     programRef.current = program;
-    factsRef.current = facts;
     if (!ready) return;
     if (consultTimer.current !== null) window.clearTimeout(consultTimer.current);
 
     if (!firstConsultDone.current) {
       firstConsultDone.current = true;
-      engineRef.current?.consult(program, factsSource(facts));
+      engineRef.current?.consult(program);
       return;
     }
     consultTimer.current = window.setTimeout(() => {
-      engineRef.current?.consult(program, factsSource(facts));
+      engineRef.current?.consult(program);
     }, 400);
     return () => {
       if (consultTimer.current !== null) window.clearTimeout(consultTimer.current);
     };
-  }, [program, facts, ready]);
+  }, [program, ready]);
 
   // ---------------------------------------------------------------- actions
 
@@ -465,7 +454,7 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
       setBusy(true);
       // Consult immediately so the goal sees the text on screen, not the version
       // from up to 400ms ago.
-      client.consult(programRef.current, factsSource(factsRef.current));
+      client.consult(programRef.current);
       // No answers to begin with: a goal that asks one suspends and comes back
       // through `answer`, which is what makes it a terminal rather than a form.
       client.input([]);
@@ -555,43 +544,15 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
     setOutput([]);
   }, []);
 
-  const addFactTerm = useCallback(
-    (term: string) => {
-      if (!room || !identity) return;
-      addFact(room.ydoc, {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        term,
-        author: identity.name,
-        at: Date.now(),
-      });
-    },
-    [room, identity],
-  );
-
-  const validateFact = useCallback(
-    (term: string): string | null => {
-      // Validated by the engine itself, so the rule for what a fact is cannot
-      // drift from the rule for what the program accepts.
-      const text = term.trimEnd().endsWith('.') ? term : `${term}.`;
-      const issue = engineRef.current ? null : null;
-      void issue;
-      if (!/\.$/.test(text)) return 'A fact must end with a full stop.';
-      if (text.split('(').length !== text.split(')').length) return 'Unbalanced parentheses.';
-      if (text.split("'").length % 2 === 0) return 'Unbalanced quote.';
-      return null;
-    },
-    [],
-  );
-
   const shareUrl = useMemo(() => {
     if (typeof window === 'undefined') return '';
-    return buildShareUrl(window.location.href.split('#')[0]!, session.room, program, facts, false);
-  }, [session.room, program, facts]);
+    return buildShareUrl(window.location.href.split('#')[0]!, session.room, program, false);
+  }, [session.room, program]);
 
   const snapshotUrl = useMemo(() => {
     if (typeof window === 'undefined') return '';
-    return buildShareUrl(window.location.href.split('#')[0]!, session.room, program, facts, true);
-  }, [session.room, program, facts]);
+    return buildShareUrl(window.location.href.split('#')[0]!, session.room, program, true);
+  }, [session.room, program]);
 
   const carets: RemoteCaret[] = useMemo(
     () =>
@@ -638,9 +599,9 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
   );
 
   const saveCopy = useCallback(() => {
-    const file: RoomFile = { version: 1, name: session.room, program, facts, log };
+    const file: RoomFile = { version: 2, name: session.room, program, log };
     download(`${session.room}.json`, serializeRoom(file), 'application/json');
-  }, [session.room, program, facts, log, download]);
+  }, [session.room, program, log, download]);
 
   const importFile = useCallback(
     async (file: File) => {
@@ -655,7 +616,6 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
         ytext.delete(0, ytext.length);
         ytext.insert(0, parsed.program);
       });
-      for (const fact of parsed.facts) addFact(room.ydoc, fact);
       setDialog(null);
     },
     [room],
@@ -767,7 +727,7 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
           />
         </section>
 
-        <section className="pane pane--side" aria-label="Console and facts">
+        <section className="pane pane--side" aria-label="Console">
           <Console
             onRun={run}
             onNext={next}
@@ -785,13 +745,6 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
             onAnswer={sendAnswer}
             waiting={repl?.waiting ?? false}
             log={log}
-          />
-          <FactsPanel
-            facts={facts}
-            me={me.name}
-            onAdd={addFactTerm}
-            onRemove={(id) => room && removeFact(room.ydoc, id)}
-            validate={validateFact}
           />
         </section>
       </main>
@@ -835,7 +788,6 @@ function Editor({ session, theme, onTheme, onNewRoom }: EditorProps) {
         <ExportDialog
           room={session.room}
           program={program}
-          facts={facts}
           log={log}
           onClose={() => setDialog(null)}
         />

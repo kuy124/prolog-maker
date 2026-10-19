@@ -4,7 +4,6 @@
  * Layout of the Yjs document:
  *
  *   doc.getText('program')      the Prolog source, one string
- *   doc.getMap('facts')         id -> { term, author, at }   asserted facts
  *   doc.getArray('log')         { id, who, goal, count, at }  the query log
  *   doc.getMap('seeds')         clientId -> program          every seed attempt
  *   doc.getMap('meta')          { name }
@@ -15,11 +14,13 @@
  * solution order depends on it. A map keyed by clause id would let one person's
  * edit reorder another's results.
  *
- * Facts are structured rather than asserted into the engine, because the engine
- * is local. A fact written by one peer has to arrive as data and be re-asserted
- * into every peer's own instance. Keeping them as terms in a map — not as lines
- * in the program text — means the program can be rewritten without losing the
- * knowledge base, and a fact can carry who wrote it.
+ * Facts used to live here as a separate map, asserted into each peer's engine from
+ * a generated file. That made them a second, weaker way to write Prolog: a fact
+ * could not have a body, could not be edited with the rest of the program, and a
+ * fact whose predicate a program also asserted into produced a permission error
+ * naming a file nobody had written. They are just clauses, so they belong in the
+ * program text with every other clause — which also means they merge, diff and
+ * undo like the rest of the source.
  *
  * The log is append-only and shared so a group can see each other's queries and
  * re-run one. It is capped: a room left open for a day should not accumulate
@@ -33,7 +34,6 @@
 import * as Y from 'yjs';
 
 export const PROGRAM = 'program';
-export const FACTS = 'facts';
 export const LOG = 'log';
 export const META = 'meta';
 /** Key holding every seed attempt, keyed by the client that made it. */
@@ -41,14 +41,6 @@ export const SEEDS = 'seeds';
 
 /** How many log entries to keep. Old entries fall off the front. */
 export const LOG_LIMIT = 200;
-
-export interface Fact {
-  id: string;
-  /** The Prolog term, as source text, e.g. `parent(ada, bo)`. */
-  term: string;
-  author: string;
-  at: number;
-}
 
 export interface LogEntry {
   id: string;
@@ -71,8 +63,6 @@ export type Seed = string;
 export function emptyDocument(doc: Y.Doc): void {
   doc.transact(() => {
     doc.getText(PROGRAM).delete(0, doc.getText(PROGRAM).length);
-    const facts = doc.getMap<Fact>(FACTS);
-    for (const key of [...facts.keys()]) facts.delete(key);
     doc.getArray<LogEntry>(LOG).delete(0, doc.getArray<LogEntry>(LOG).length);
     const seeds = doc.getMap<Seed>(SEEDS);
     for (const key of [...seeds.keys()]) seeds.delete(key);
@@ -156,32 +146,6 @@ export function reconcileProgram(doc: Y.Doc): void {
   }
 }
 
-export function readFacts(doc: Y.Doc): Fact[] {
-  const facts = doc.getMap<Fact>(FACTS);
-  const out: Fact[] = [];
-  facts.forEach((value) => {
-    // A peer can send any shape; only a well-formed fact is usable.
-    if (!value || typeof value.term !== 'string' || value.term.trim().length === 0) return;
-    out.push({
-      id: typeof value.id === 'string' ? value.id : 'unknown',
-      term: value.term,
-      author: typeof value.author === 'string' ? value.author : 'someone',
-      at: typeof value.at === 'number' ? value.at : 0,
-    });
-  });
-  // Sorted so every peer asserts them in the same order, which keeps
-  // `findall/3` results identical across peers.
-  return out.sort((a, b) => (a.term < b.term ? -1 : a.term > b.term ? 1 : 0));
-}
-
-export function addFact(doc: Y.Doc, fact: Fact): void {
-  doc.getMap<Fact>(FACTS).set(fact.id, fact);
-}
-
-export function removeFact(doc: Y.Doc, id: string): void {
-  doc.getMap<Fact>(FACTS).delete(id);
-}
-
 export function readLog(doc: Y.Doc): LogEntry[] {
   const log = doc.getArray<LogEntry>(LOG);
   return log.toArray().filter((entry): entry is LogEntry => Boolean(entry) && typeof entry.goal === 'string');
@@ -218,17 +182,4 @@ export function updateLog(doc: Y.Doc, id: string, patch: Partial<Omit<LogEntry, 
     log.delete(index, 1);
     log.insert(index, [{ ...current, ...patch }]);
   });
-}
-
-/**
- * The facts file handed to the engine.
- *
- * Each fact is written as a clause terminated by a full stop. The term is not
- * re-quoted or re-parsed here: it was validated when it was added, and rewriting
- * it would risk changing what it means. A term that somehow arrives malformed
- * makes the whole consult fail, which is visible, rather than being silently
- * dropped, which is not.
- */
-export function factsSource(facts: Fact[]): string {
-  return facts.map((fact) => (fact.term.trimEnd().endsWith('.') ? fact.term : `${fact.term}.`)).join('\n');
 }
