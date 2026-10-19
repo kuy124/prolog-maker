@@ -199,7 +199,21 @@ export function ProgramEditor({ ytext, onCursor, carets, errorLine, readOnly = f
     return errorLine;
   }, [errorLine]);
 
-  const lineHeight = LINE_HEIGHT;
+  /*
+   * The editor's real metrics, measured from the rendered font.
+   *
+   * These used to be constants — `CHAR_WIDTH = 8.4`, `LINE_HEIGHT = 22` — which is
+   * only correct for IBM Plex Mono at 13px. The app named that font but never
+   * loaded it, so most machines rendered a fallback and every remote caret was
+   * placed at the wrong column: about 1.25px of drift per character, a quarter of
+   * a screen by the end of a long clause. Measuring once, after the fonts settle,
+   * is correct for whatever face actually rendered.
+   *
+   * Measured once rather than per caret: a layout read on every remote cursor move
+   * is the cost the constants existed to avoid. A ResizeObserver covers the other
+   * case, where a zoom or a theme change alters the metrics underneath us.
+   */
+  const metrics = useEditorMetrics(textareaRef);
 
   return (
     <div className="editor">
@@ -220,7 +234,7 @@ export function ProgramEditor({ ytext, onCursor, carets, errorLine, readOnly = f
                 className={
                   line === caretLine ? 'editor__lineno editor__lineno--error' : 'editor__lineno'
                 }
-                style={{ height: lineHeight }}
+                style={{ height: metrics.lineHeight }}
               >
                 {line}
               </div>
@@ -247,7 +261,7 @@ export function ProgramEditor({ ytext, onCursor, carets, errorLine, readOnly = f
               key={peer.clientId}
               className="editor__caret"
               style={{
-                ...caretPosition(text, peer.position),
+                ...caretPosition(text, peer.position, metrics),
                 background: peer.color,
                 color: presenceInk(peer.color),
               }}
@@ -293,27 +307,106 @@ export function ProgramEditor({ ytext, onCursor, carets, errorLine, readOnly = f
 /**
  * Converts a character offset into a position inside the highlight layer.
  *
- * The editor uses a monospace font at a known size, so a column can be measured in
- * `ch` units without touching the DOM. That keeps remote carets cheap: moving one
- * does not force a layout read, and a room with a dozen people typing does not
- * re-measure the page on every keystroke of anybody's.
- *
- * `CHAR_WIDTH` and `LINE_HEIGHT` have to match `.editor__highlight` in the
- * stylesheet, and the padding offsets have to match its `padding`. They are
- * duplicated rather than read from the DOM on purpose: measuring would mean a
- * layout read per remote caret, which is the thing being avoided here.
+ * Pure: it takes the metrics it needs rather than reading the DOM, so a room with
+ * a dozen people typing does not re-measure the page on every keystroke. The
+ * metrics are measured once, in `useEditorMetrics`.
  */
-const CHAR_WIDTH = 8.4;
-const LINE_HEIGHT = 22;
-const LAYER_PADDING = 8;
-
-function caretPosition(text: string, offset: number): { top: number; left: number } {
+function caretPosition(
+  text: string,
+  offset: number,
+  metrics: EditorMetrics,
+): { top: number; left: number } {
   const clamped = Math.max(0, Math.min(offset, text.length));
   const before = text.slice(0, clamped);
   const line = before.split('\n').length - 1;
   const column = clamped - (before.lastIndexOf('\n') + 1);
   return {
-    top: line * LINE_HEIGHT + LAYER_PADDING,
-    left: column * CHAR_WIDTH + LAYER_PADDING,
+    top: line * metrics.lineHeight + metrics.padding,
+    left: column * metrics.charWidth + metrics.padding,
   };
 }
+
+export interface EditorMetrics {
+  /** Advance width of one character in the rendered monospace face, in px. */
+  charWidth: number;
+  /** Height of one line, in px. */
+  lineHeight: number;
+  /** The layer's padding, which both axes offset by. */
+  padding: number;
+}
+
+/**
+ * The metrics used to place a remote caret.
+ *
+ * The values fall back to the ones the stylesheet specifies, so the very first
+ * frame is not drawn at zero, and are then replaced by what the browser actually
+ * rendered. That matters because the app cannot assume its font loaded: a blocked
+ * or unavailable font falls back to the system monospace, whose advance width is
+ * different — 7.15px against 8.4px for IBM Plex Mono at 13px, which puts a caret
+ * a quarter of a screen off by column 200.
+ *
+ * Measurement is done once per font change rather than per caret. `document.fonts`
+ * is watched so the metrics are recomputed when a face finishes loading or fails,
+ * and a ResizeObserver covers a zoom that changes the computed font size.
+ */
+function useEditorMetrics(ref: React.RefObject<HTMLTextAreaElement>): EditorMetrics {
+  const [metrics, setMetrics] = useState<EditorMetrics>(DEFAULT_METRICS);
+
+  const measure = useCallback(() => {
+    const element = ref.current;
+    if (!element) return;
+    const style = getComputedStyle(element);
+    const lineHeight = Number.parseFloat(style.lineHeight);
+    const padding = Number.parseFloat(style.paddingTop);
+
+    // A hidden span in the same face is the honest way to ask how wide a
+    // character is: `1ch` is defined against the font's own "0" advance and
+    // rounds, and `measureText` needs a canvas in the matching font.
+    const probe = document.createElement('span');
+    probe.style.cssText = [
+      'position:absolute',
+      'visibility:hidden',
+      'white-space:pre',
+      'pointer-events:none',
+      `font-family:${style.fontFamily}`,
+      `font-size:${style.fontSize}`,
+      `font-weight:${style.fontWeight}`,
+    ].join(';');
+    // A long run averages away sub-pixel rounding on a single glyph.
+    probe.textContent = '0'.repeat(200);
+    document.body.appendChild(probe);
+    const charWidth = probe.getBoundingClientRect().width / 200;
+    probe.remove();
+
+    setMetrics({
+      charWidth: Number.isFinite(charWidth) && charWidth > 0 ? charWidth : DEFAULT_METRICS.charWidth,
+      lineHeight:
+        Number.isFinite(lineHeight) && lineHeight > 0 ? lineHeight : DEFAULT_METRICS.lineHeight,
+      padding: Number.isFinite(padding) ? padding : DEFAULT_METRICS.padding,
+    });
+  }, [ref]);
+
+  useLayoutEffect(() => {
+    measure();
+    // A face arriving (or failing to) changes the metrics with no resize event.
+    const fonts = document.fonts;
+    fonts?.addEventListener?.('loadingdone', measure);
+    const observer = new ResizeObserver(measure);
+    if (ref.current) observer.observe(ref.current);
+    return () => {
+      fonts?.removeEventListener?.('loadingdone', measure);
+      observer.disconnect();
+    };
+  }, [measure, ref]);
+
+  return metrics;
+}
+
+/**
+ * The values `.editor__highlight` declares in the stylesheet.
+ *
+ * A starting point, not a source of truth: they are replaced by measurement as
+ * soon as the element exists. Keeping them means the first paint places a caret
+ * plausibly instead of at the origin.
+ */
+const DEFAULT_METRICS: EditorMetrics = { charWidth: 8.4, lineHeight: 22, padding: 8 };

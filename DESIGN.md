@@ -35,8 +35,19 @@ Read this before changing a token or adding a surface.
 ## Fonts
 
 IBM Plex Sans for prose, IBM Plex Mono for everything Prolog. Both are the fonts
-IBM publishes for exactly this kind of work, and they are not loaded from a
-third party — the stacks fall back to the system UI and monospace fonts.
+IBM publishes for exactly this kind of work. They are **self-hosted** — copied into
+`public/fonts/` from `@fontsource` by `npm run fonts` — so the app makes no
+third-party request and the type survives an offline load or a blocked CDN.
+
+Two things about how they are declared:
+
+- `font-display: swap`, so text paints in the fallback immediately and swaps in.
+  `block` would hide the text until the font resolved, and for ever if it never
+  did, which is the one failure a reader cannot work around.
+- The editor measures the rendered font rather than assuming its metrics. A
+  fallback face is a different width, and the editor places remote carets by
+  multiplying a column by that width — so a hard-coded value puts every caret in
+  the wrong place the moment the real font is missing.
 
 ## Accessibility floor
 
@@ -90,8 +101,9 @@ The editor is a `<textarea>` with a syntax-highlighted `<pre>` painted behind it
 The textarea holds the text and all the native behaviour — selection, undo, IME,
 the mobile keyboard, screen readers. The highlight layer is `aria-hidden` and
 kept in lockstep by measuring nothing: the caret positions for remote peers are
-computed from a monospace font's known metrics, which keeps a peer's cursor
-moving without a layout read.
+computed from a monospace font's advance width, measured once from the face that
+actually rendered, which keeps a peer's cursor moving without a layout read per
+keystroke.
 
 A full editor component would fight over who owns the shared document. This one
 does not, which is why the collaboration works.
